@@ -9,6 +9,7 @@
 html, body, #root { min-height: 100%; margin: 0; }
 body { min-height: 100vh; background: #090909; }
 button, input { font: inherit; }
+button { color: inherit; }
 
 .app {
   min-height: 100vh;
@@ -136,6 +137,35 @@ h1 { margin: 0; font-size: clamp(28px, 5vw, 52px); line-height: 0.98; }
   cursor: ew-resize;
 }
 
+.composer { align-items: start; }
+.composerControls {
+  align-content: start;
+  gap: 20px;
+  max-height: 72vh;
+  overflow-y: auto;
+}
+.controlGroup { display: grid; gap: 10px; }
+.controlGroup strong { font-size: 12px; color: rgba(255,255,255,.8); }
+.instrumentPicker { display: grid; grid-template-columns: 1fr; gap: 7px; }
+.instrumentPicker button,
+.placementActions button {
+  appearance: none;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 10px;
+  padding: 9px 10px;
+  background: rgba(255,255,255,.045);
+  cursor: pointer;
+}
+.instrumentPicker button { text-align: left; border-left: 3px solid var(--instrument-color); }
+.instrumentPicker button.selected {
+  background: color-mix(in srgb, var(--instrument-color) 18%, transparent);
+  border-color: var(--instrument-color);
+}
+.placementActions { display: flex; align-items: center; gap: 8px; }
+.placementActions button:disabled { opacity: .3; cursor: default; }
+.placementActions span { margin-left: auto; font-size: 11px; opacity: .45; }
+.placementCanvas { touch-action: pan-y; cursor: copy; }
+
 .hint {
   bottom: 18px;
   padding: 10px 14px;
@@ -188,5 +218,8 @@ footer {
     grid-template-columns: 1fr;
     gap: 20px;
   }
+  .composerControls { max-height: none; overflow: visible; }
+  .instrumentPicker { grid-template-columns: repeat(3, 1fr); }
+  .instrumentPicker button { text-align: center; font-size: 11px; padding-inline: 5px; }
   footer { display: none; }
 }
