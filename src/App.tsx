@@ -37,6 +37,7 @@ export default function App() {
   const [selected, setSelected] = useState<Instrument>('keys');
   const [mode, setMode] = useState<'place' | 'live'>('place');
   const [radius, setRadius] = useState(50);
+  const [fourOnFloor, setFourOnFloor] = useState(false);
   const [controls, setControls] = useState({
     tempo: 96, pitch: 0, complexity: 52, space: 58,
     keys: 78, keysTone: 62, keysSustain: 55,
@@ -127,9 +128,10 @@ export default function App() {
       drums: controls.drums / 100,
       drumPunch: controls.drumPunch / 100,
       drumDensity: controls.drumDensity / 100,
+      fourOnFloor,
     });
     if (placementsRef.current.length) { stopBeat(); startBeat(); }
-  }, [controls]);
+  }, [controls, fourOnFloor]);
 
   useEffect(() => {
     let frame = 0;
@@ -291,7 +293,12 @@ export default function App() {
           {([['drums', 'Volume', 'Sets the overall drum level.'], ['drumPunch', 'Punch', 'Strengthens kick impact and snare body.'],
             ['drumDensity', 'Density', 'Adds more subdivisions to bright percussion circles.']] as const).map(([key, label, help]) =>
             <label key={key}><span>{label} <output>{controls[key]}%</output></span><small>{help}</small>
-              <Slider value={controls[key]} onChange={(value) => setControl(key, value)} /></label>)}</div>
+              <Slider value={controls[key]} onChange={(value) => setControl(key, value)} /></label>)}
+          <button className={`floorToggle ${fourOnFloor ? 'selected' : ''}`}
+            aria-pressed={fourOnFloor} onClick={() => setFourOnFloor((value) => !value)}>
+            <span>Four-on-the-floor</span><small>{fourOnFloor ? 'On · kick plays every beat' : 'Off · kick follows the image pattern'}</small>
+          </button>
+        </div>
         <div className="instrumentModule globalModule"><strong>Composition</strong>
           <label><span>Tempo <output>{controls.tempo} BPM</output></span><small>Sets the speed of the loop.</small>
             <Slider min={55} max={160} value={controls.tempo} onChange={(value) => setControl('tempo', value)} /></label>

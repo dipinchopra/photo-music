@@ -30,6 +30,7 @@ type MusicControls = {
   drums: number;
   drumPunch: number;
   drumDensity: number;
+  fourOnFloor: boolean;
 };
 
 const C2 = 65.406391;
@@ -55,7 +56,7 @@ export class ChordEngine {
     transpose: 0, complexity: 0.5, space: 0.55,
     keys: 0.78, keysTone: 0.62, keysSustain: 0.55,
     bass: 0.68, bassDepth: 0.7, bassMovement: 0.45,
-    drums: 0.6, drumPunch: 0.7, drumDensity: 0.5,
+    drums: 0.6, drumPunch: 0.7, drumDensity: 0.5, fourOnFloor: false,
   };
 
   setVariation(seed: number) {
@@ -239,7 +240,9 @@ export class ChordEngine {
 
       if (brightness < 0.34) {
         const kickPatterns = [[0, 4], [0, 3, 4, 6], [0, 4, 7]];
-        const pattern = this.controls.complexity < 0.35 ? [0, 4] : kickPatterns[variation];
+        const pattern = this.controls.fourOnFloor
+          ? [0, 2, 4, 6]
+          : this.controls.complexity < 0.35 ? [0, 4] : kickPatterns[variation];
         if (pattern.includes(beat)) this.kick((0.11 + this.controls.drumPunch * 0.14) * volume);
       } else if (brightness < 0.68) {
         const snarePatterns = [[2, 6], [2, 6, 7], [2, 5, 6]];

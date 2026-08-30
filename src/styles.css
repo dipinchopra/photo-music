@@ -167,6 +167,20 @@ h1 { margin: 0; font-size: clamp(28px, 5vw, 52px); line-height: 0.98; }
   background: rgba(0,0,0,.18);
 }
 .instrumentModule > strong { font-size: 13px; }
+.floorToggle {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid rgba(255,184,108,.3);
+  border-radius: 10px;
+  color: inherit;
+  text-align: left;
+  background: rgba(255,184,108,.06);
+  cursor: pointer;
+}
+.floorToggle small { color: rgba(255,255,255,.48); }
+.floorToggle.selected { background: rgba(255,184,108,.2); border-color: #ffb86c; }
 .keysModule { border-top-color: #8be9fd; }
 .bassModule { border-top-color: #bd93f9; }
 .drumsModule { border-top-color: #ffb86c; }
