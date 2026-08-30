@@ -65,20 +65,18 @@ export default function App() {
       ctx.restore();
     }
 
-    placementsRef.current.forEach((placement) => {
+    placementsRef.current.filter((placement) => placement.active).forEach((placement) => {
       const config = INSTRUMENTS.find((item) => item.id === placement.instrument)!;
       const x = placement.x * dpr;
       const y = placement.y * dpr;
       const r = placement.radius * dpr;
       ctx.save();
-      ctx.globalAlpha = placement.active ? 1 : 0.3;
       ctx.strokeStyle = config.color;
       ctx.lineWidth = 2 * dpr;
-      if (!placement.active) ctx.setLineDash([6 * dpr, 7 * dpr]);
       ctx.shadowColor = config.color;
-      ctx.shadowBlur = placement.active ? (7 + pulseRef.current * 12) * dpr : 0;
+      ctx.shadowBlur = (7 + pulseRef.current * 12) * dpr;
       ctx.beginPath();
-      ctx.arc(x, y, r * (1 + (placement.active ? pulseRef.current : 0) * 0.08), 0, Math.PI * 2);
+      ctx.arc(x, y, r * (1 + pulseRef.current * 0.08), 0, Math.PI * 2);
       ctx.stroke();
       ctx.restore();
     });
@@ -237,7 +235,7 @@ export default function App() {
           <button disabled={!placements.some((item) => !item.active)}
             onClick={() => updatePlacements(placementsRef.current.map((item) => ({ ...item, active: true })))}>Bring back</button>
         </div>
-        <small className="loopHint">Tap a circle to mute it. Tap its dashed ghost to bring it back.</small>
+        <small className="loopHint">Tap a circle to remove it from the loop. Use Bring back to restore removed parts.</small>
         {([
           ['keys', 'Keyboard', 'Melodic voices taken from the sampled colors.'],
           ['bass', 'Bass', 'Low notes following the underlying chord progression.'],
@@ -260,7 +258,7 @@ export default function App() {
           onPointerDown={(e) => {
             void music.unlock();
             const point = canvasPoint(e.clientX, e.clientY);
-            const hit = [...placementsRef.current].reverse().find((placement) =>
+            const hit = [...placementsRef.current].reverse().find((placement) => placement.active &&
               Math.hypot(point.x - placement.x, point.y - placement.y) <= placement.radius);
             if (hit) {
               e.currentTarget.setPointerCapture(e.pointerId);
