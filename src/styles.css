@@ -181,7 +181,9 @@ h1 { margin: 0; font-size: clamp(28px, 5vw, 52px); line-height: 0.98; }
 .controlGroup { display: grid; gap: 10px; }
 .controlGroup strong { font-size: 12px; color: rgba(255,255,255,.8); }
 .instrumentPicker { display: grid; grid-template-columns: 1fr; gap: 7px; }
+.modePicker { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
 .instrumentPicker button,
+.modePicker button,
 .placementActions button {
   appearance: none;
   border: 1px solid rgba(255,255,255,.12);
@@ -191,6 +193,11 @@ h1 { margin: 0; font-size: clamp(28px, 5vw, 52px); line-height: 0.98; }
   cursor: pointer;
 }
 .instrumentPicker button { text-align: left; border-left: 3px solid var(--instrument-color); }
+.modePicker button.selected {
+  color: #090909;
+  background: #f5f5f5;
+  border-color: #f5f5f5;
+}
 .instrumentPicker button.selected {
   background: color-mix(in srgb, var(--instrument-color) 18%, transparent);
   border-color: var(--instrument-color);
@@ -200,6 +207,7 @@ h1 { margin: 0; font-size: clamp(28px, 5vw, 52px); line-height: 0.98; }
 .placementActions span { margin-left: auto; font-size: 11px; opacity: .45; }
 .loopHint { margin-top: -12px; color: rgba(255,255,255,.5); line-height: 1.4; }
 .placementCanvas { touch-action: pan-y; cursor: copy; }
+.placementCanvas.liveCanvas { touch-action: none; cursor: crosshair; }
 
 .hint {
   bottom: 18px;

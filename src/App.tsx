@@ -22,6 +22,7 @@ export default function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const placementsRef = useRef<Placement[]>([]);
+  const livePlacementRef = useRef<Placement | null>(null);
   const beatRef = useRef<number | null>(null);
   const tempoRef = useRef(96);
   const pulseRef = useRef(0);
@@ -34,6 +35,7 @@ export default function App() {
   const [hasImage, setHasImage] = useState(false);
   const [placements, setPlacements] = useState<Placement[]>([]);
   const [selected, setSelected] = useState<Instrument>('keys');
+  const [mode, setMode] = useState<'place' | 'live'>('place');
   const [radius, setRadius] = useState(50);
   const [controls, setControls] = useState({
     tempo: 96, pitch: 0, complexity: 52, space: 58,
@@ -64,12 +66,15 @@ export default function App() {
     else { dw = height * imgRatio; dx = (width - dw) / 2; }
     ctx.drawImage(image, dx, dy, dw, dh);
 
-    if (placementsRef.current.length) {
+    const drawnPlacements = livePlacementRef.current
+      ? [...placementsRef.current, livePlacementRef.current]
+      : placementsRef.current;
+    if (drawnPlacements.length) {
       ctx.save();
       ctx.fillStyle = 'rgba(0,0,0,.38)';
       ctx.beginPath();
       ctx.rect(0, 0, width, height);
-      placementsRef.current.forEach((placement) => {
+      drawnPlacements.forEach((placement) => {
         ctx.moveTo((placement.x + placement.radius) * dpr, placement.y * dpr);
         ctx.arc(placement.x * dpr, placement.y * dpr, placement.radius * dpr, 0, Math.PI * 2);
       });
@@ -77,7 +82,7 @@ export default function App() {
       ctx.restore();
     }
 
-    placementsRef.current.forEach((placement) => {
+    drawnPlacements.forEach((placement) => {
       const config = INSTRUMENTS.find((item) => item.id === placement.instrument)!;
       const x = placement.x * dpr;
       const y = placement.y * dpr;
@@ -176,25 +181,45 @@ export default function App() {
     return { hue: sample.h, saturation: sample.s, brightness: sample.l, texture: sample.texture };
   };
 
-  const placeAt = async (clientX: number, clientY: number) => {
+  const makePlacementAt = (clientX: number, clientY: number, id: number) => {
     const canvas = canvasRef.current;
     const image = imageRef.current;
-    if (!canvas || !image || !hasImage) return;
+    if (!canvas || !image || !hasImage) return null;
     const { x, y } = canvasPoint(clientX, clientY);
     const tone = sampleToneAt(x, y, radius);
-    if (!tone) return;
-    const placement: Placement = {
-      id: nextIdRef.current++, x, y, radius,
+    if (!tone) return null;
+    return {
+      id, x, y, radius,
       level: 0.25 + ((radius - 28) / 62) * 0.75,
       instrument: selected,
       tone,
-    };
+    } satisfies Placement;
+  };
+
+  const placeAt = async (clientX: number, clientY: number) => {
+    const placement = makePlacementAt(clientX, clientY, nextIdRef.current++);
+    if (!placement) return;
     const next = [...placementsRef.current, placement].slice(-12);
     placementsRef.current = next;
     setPlacements(next);
     await music.playPlacements(next);
     startBeat();
     pulseRef.current = 1;
+  };
+
+  const playLiveAt = async (clientX: number, clientY: number) => {
+    const placement = makePlacementAt(clientX, clientY, -1);
+    if (!placement) return;
+    livePlacementRef.current = placement;
+    await music.playPlacements([...placementsRef.current, placement]);
+    startBeat();
+    pulseRef.current = 1;
+  };
+
+  const stopLive = () => {
+    livePlacementRef.current = null;
+    if (placementsRef.current.length) void music.playPlacements(placementsRef.current);
+    else { stopBeat(); music.stop(); }
   };
 
   const updatePlacements = (next: Placement[]) => {
@@ -229,7 +254,12 @@ export default function App() {
     <div className="instrument composer">
       <section className="controls composerControls" aria-label="Composer controls">
         <div className="controlGroup">
-          <strong>1. Choose an instrument</strong>
+          <strong>1. Choose how to play</strong>
+          <div className="modePicker">
+            <button className={mode === 'place' ? 'selected' : ''} onClick={() => { stopLive(); setMode('place'); }}>Place loops</button>
+            <button className={mode === 'live' ? 'selected' : ''} onClick={() => setMode('live')}>Live cursor</button>
+          </div>
+          <strong>2. Choose an instrument</strong>
           <div className="instrumentPicker">
             {INSTRUMENTS.map((instrument) => <button key={instrument.id}
               className={selected === instrument.id ? 'selected' : ''}
@@ -276,9 +306,14 @@ export default function App() {
       <section className={`stage ${hasImage ? 'hasImage' : ''}`}>
         {!hasImage && <label className="emptyState"><strong>Choose a photo</strong><span>Then place instruments onto its colors and textures.</span>
           <input type="file" accept="image/*" onChange={(e) => upload(e.target.files?.[0])} /></label>}
-        <canvas ref={canvasRef} className="canvas placementCanvas"
+        <canvas ref={canvasRef} className={`canvas placementCanvas ${mode === 'live' ? 'liveCanvas' : ''}`}
           onPointerDown={(e) => {
             void music.unlock();
+            if (mode === 'live') {
+              e.currentTarget.setPointerCapture(e.pointerId);
+              void playLiveAt(e.clientX, e.clientY);
+              return;
+            }
             const point = canvasPoint(e.clientX, e.clientY);
             const hit = [...placementsRef.current].reverse().find((placement) =>
               Math.hypot(point.x - placement.x, point.y - placement.y) <= placement.radius);
@@ -291,6 +326,10 @@ export default function App() {
             } else pointerStartRef.current = { x: e.clientX, y: e.clientY };
           }}
           onPointerMove={(e) => {
+            if (mode === 'live') {
+              if (e.pointerType === 'mouse' || e.buttons > 0) void playLiveAt(e.clientX, e.clientY);
+              return;
+            }
             const drag = dragRef.current;
             if (!drag) return;
             const point = canvasPoint(e.clientX, e.clientY);
@@ -303,6 +342,7 @@ export default function App() {
             setPlacements(next);
           }}
           onPointerUp={(e) => {
+            if (mode === 'live') { stopLive(); return; }
             const drag = dragRef.current;
             if (drag) {
               dragRef.current = null;
@@ -322,8 +362,14 @@ export default function App() {
             pointerStartRef.current = null;
             if (start && Math.hypot(e.clientX - start.x, e.clientY - start.y) < 12) void placeAt(e.clientX, e.clientY);
           }}
-          onPointerCancel={() => { dragRef.current = null; pointerStartRef.current = null; }} />
-        {hasImage && !placements.length && <div className="hint">Choose an instrument, set its size, then tap the photo</div>}
+          onPointerCancel={() => {
+            if (mode === 'live') stopLive();
+            dragRef.current = null; pointerStartRef.current = null;
+          }}
+          onPointerLeave={(e) => { if (mode === 'live' && e.pointerType === 'mouse') stopLive(); }} />
+        {hasImage && !placements.length && <div className="hint">{mode === 'live'
+          ? 'Move the cursor — press and drag on mobile'
+          : 'Choose an instrument, set its size, then tap the photo'}</div>}
       </section>
     </div>
     <footer><span>Circle size → volume</span><span>Color → notes</span><span>Texture → rhythm</span></footer>

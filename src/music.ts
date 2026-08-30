@@ -194,6 +194,18 @@ export class ChordEngine {
     const bass = this.placements.filter((p) => p.instrument === 'bass');
     const drums = this.placements.filter((p) => p.instrument === 'drums');
 
+    // A slow pad supplies the harmonic bed that makes the image notes feel
+    // like a melody rather than isolated pitches.
+    if (keys.length && beat === 0) {
+      const third = root === 9 ? 3 : 4;
+      [0, third, 7].forEach((interval, index) => {
+        this.tone(hz(key + root + interval + 24),
+          (0.025 - index * 0.003) * this.controls.keys,
+          2.1 + this.controls.keysSustain * 1.4 + this.controls.space * 0.7,
+          'sine', 850 + this.controls.keysTone * 750, 0.16, 0.55);
+      });
+    }
+
     keys.forEach((placement, index) => {
       const degree = Math.min(4, Math.floor(placement.tone.hue / 72));
       const register = placement.tone.brightness > 0.66 ? 36 : placement.tone.brightness < 0.3 ? 24 : 31;
