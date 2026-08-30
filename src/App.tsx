@@ -12,7 +12,6 @@ export default function App() {
   const pointRef = useRef<Point | null>(null);
   const activePointsRef = useRef(new Map<number, Point>());
   const playingRef = useRef(false);
-  const lastChordRef = useRef('');
   const beatRef = useRef<number | null>(null);
   const tempoRef = useRef(100);
   const visualRef = useRef({ pulse: 0, hue: 200, texture: 0, step: 0 });
@@ -205,8 +204,11 @@ export default function App() {
     octx.drawImage(image, dx, dy, dw, dh);
 
     const dpr = off.width / rect.width;
-    const samples = [...activePointsRef.current.values()].map((point) =>
-      sampleAverageColor(octx, point.x * dpr, point.y * dpr, 18 * dpr));
+    const touchSamples = [...activePointsRef.current.entries()].map(([id, point]) => ({
+      id,
+      sample: sampleAverageColor(octx, point.x * dpr, point.y * dpr, 18 * dpr),
+    }));
+    const samples = touchSamples.map(({ sample }) => sample);
     const count = Math.max(1, samples.length);
     const hueX = samples.reduce((sum, sample) => sum + Math.cos(sample.h * Math.PI / 180), 0);
     const hueY = samples.reduce((sum, sample) => sum + Math.sin(sample.h * Math.PI / 180), 0);
@@ -216,25 +218,23 @@ export default function App() {
     const texture = samples.reduce((sum, sample) => sum + sample.texture, 0) / count;
     visualRef.current.hue = hue;
     visualRef.current.texture = texture;
-    const nextChord = colorToChord(hue, saturation, lightness, texture);
-
-    if (nextChord.id !== lastChordRef.current) {
-      await music.play(nextChord);
-      if (!playingRef.current) {
-        music.stop(0.02);
-        return;
-      }
-      lastChordRef.current = nextChord.id;
-      setChord(nextChord.name);
-      if ('vibrate' in navigator) navigator.vibrate(16);
+    const voices = touchSamples.map(({ id, sample }) => ({
+      id,
+      scene: colorToChord(sample.h, sample.s, sample.l, sample.texture),
+    }));
+    await music.playTouches(voices);
+    if (!playingRef.current) {
+      music.stop(0.02);
+      return;
     }
+    setChord(`${voices.length} ${voices.length === 1 ? 'voice' : 'voices'}`);
+    if ('vibrate' in navigator) navigator.vibrate(16);
 
     requestAnimationFrame(draw);
   };
 
   const deactivate = () => {
     playingRef.current = false;
-    lastChordRef.current = '';
     setIsActive(false);
     setChord('');
     stopBeat();
@@ -247,10 +247,12 @@ export default function App() {
 
   const releasePointer = (pointerId: number) => {
     activePointsRef.current.delete(pointerId);
+    music.removeTouch(pointerId);
     if (!activePointsRef.current.size) {
       deactivate();
       return;
     }
+    setChord(`${activePointsRef.current.size} ${activePointsRef.current.size === 1 ? 'voice' : 'voices'}`);
     pointRef.current = [...activePointsRef.current.values()].at(-1) ?? null;
     requestAnimationFrame(draw);
   };
@@ -324,7 +326,7 @@ export default function App() {
         />
 
         {hasImage && !isActive && (
-          <div className="hint">Hold two points, then move a third to shape the music</div>
+          <div className="hint">Touch one or more points — move any finger to shape its voice</div>
         )}
 
         {isActive && chord && <div className="chordPill">{chord}</div>}
@@ -368,7 +370,7 @@ export default function App() {
         <span>Hue → chord</span>
         <span>Brightness → octave</span>
         <span>Saturation → richness</span>
-        <span>Texture spectrum → rhythm</span>
+        <span>Texture spectrum → tone</span>
       </footer>
     </main>
   );

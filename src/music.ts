@@ -48,16 +48,16 @@ export class ChordEngine {
   private feedback: GainNode | null = null;
   private voices: OscillatorNode[] = [];
   private gains: GainNode[] = [];
-  private scene: ChordInfo | null = null;
+  private touchScenes = new Map<number, ChordInfo>();
   private step = 0;
-  private lastMelodyDegree = 2;
+  private lastMelodyDegrees = new Map<number, number>();
   private variation = 0.5;
   private controls: MusicControls = { transpose: 0, complexity: 0.55, warmth: 0.65, space: 0.65 };
 
   setVariation(seed: number) {
     this.variation = seed;
     this.step = Math.floor(seed * 16);
-    this.lastMelodyDegree = Math.floor(seed * PENTATONIC.length);
+    this.lastMelodyDegrees.clear();
     this.updateSpace();
   }
 
@@ -101,12 +101,21 @@ export class ChordEngine {
     source.start(0);
   }
 
-  async play(scene: ChordInfo) {
+  async playTouches(touches: Array<{ id: number; scene: ChordInfo }>) {
     await this.unlock();
     if (!this.context || !this.master) return;
-    const wasSilent = !this.scene;
-    this.scene = scene;
+    const wasSilent = this.touchScenes.size === 0;
+    this.touchScenes = new Map(touches.map(({ id, scene }) => [id, scene]));
+    const activeIds = new Set(touches.map(({ id }) => id));
+    this.lastMelodyDegrees.forEach((_, id) => {
+      if (!activeIds.has(id)) this.lastMelodyDegrees.delete(id);
+    });
     if (wasSilent) this.pulse();
+  }
+
+  removeTouch(id: number) {
+    this.touchScenes.delete(id);
+    this.lastMelodyDegrees.delete(id);
   }
 
   private triggerVoice(noteFrequency: number, volume: number, duration: number,
@@ -138,53 +147,15 @@ export class ChordEngine {
     };
   }
 
-  private triggerKick() {
-    if (!this.context || !this.master) return;
-    const now = this.context.currentTime;
-    const osc = this.context.createOscillator();
-    const gain = this.context.createGain();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(115, now);
-    osc.frequency.exponentialRampToValueAtTime(48, now + 0.13);
-    gain.gain.setValueAtTime(0.11, now);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.24);
-    osc.connect(gain);
-    gain.connect(this.master);
-    osc.start(now);
-    osc.stop(now + 0.26);
-  }
-
-  private triggerHat(texture: number, accent: boolean) {
-    if (!this.context || !this.master) return;
-    const now = this.context.currentTime;
-    const duration = accent ? 0.075 : 0.045;
-    const buffer = this.context.createBuffer(1, Math.ceil(this.context.sampleRate * duration), this.context.sampleRate);
-    const data = buffer.getChannelData(0);
-    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
-    const noise = this.context.createBufferSource();
-    const filter = this.context.createBiquadFilter();
-    const gain = this.context.createGain();
-    noise.buffer = buffer;
-    filter.type = 'highpass';
-    filter.frequency.value = 4800 + texture * 3200;
-    gain.gain.setValueAtTime((accent ? 0.026 : 0.015) + texture * 0.012, now);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
-    noise.connect(filter);
-    filter.connect(gain);
-    gain.connect(this.master);
-    noise.start(now);
-  }
-
   pulse() {
-    if (!this.scene) return;
-    const scene = this.scene;
+    if (!this.touchScenes.size) return;
+    const scenes = [...this.touchScenes.entries()];
     const keyIndex = Math.floor(this.variation * KEY_OFFSETS.length) % KEY_OFFSETS.length;
     const key = KEY_OFFSETS[keyIndex] + this.controls.transpose;
     const progression = PROGRESSIONS[Math.floor(this.variation * PROGRESSIONS.length) % PROGRESSIONS.length];
     const chordRoot = progression[Math.floor(this.step / 8) % progression.length];
     const chordPosition = this.step % 8;
     const warmth = this.controls.warmth;
-    const cutoff = 1000 + (1 - warmth) * 2300 + scene.brightness * 1100;
 
     if (chordPosition === 0) {
       const third = chordRoot === 9 ? 3 : 4;
@@ -199,41 +170,29 @@ export class ChordEngine {
         warmth > 0.45 ? 'triangle' : 'sine', 620, 0.025);
     }
 
-    // Percussion stays subordinate to the melody: image texture opens the
-    // hi-hat while Complexity determines how many subdivisions are played.
-    if (chordPosition === 0 || (chordPosition === 4 && this.controls.complexity > 0.22)) {
-      this.triggerKick();
-    }
-    if (this.controls.complexity > 0.18 && chordPosition % 2 === 1) {
-      this.triggerHat(scene.texture, chordPosition === 3 || chordPosition === 7);
-    }
-    if (this.controls.complexity > 0.76 && chordPosition % 2 === 0 && chordPosition !== 0) {
-      this.triggerHat(scene.texture * 0.8, false);
-    }
-
-    const imageTarget = Math.min(4, Math.floor((((scene.hue % 360) + 360) % 360) / 72));
-    const maxMove = this.controls.complexity > 0.7 ? 2 : 1;
-    const delta = Math.max(-maxMove, Math.min(maxMove, imageTarget - this.lastMelodyDegree));
-    if (delta !== 0) this.lastMelodyDegree += delta;
-    else if (this.controls.complexity > 0.48 && chordPosition % 3 === 2) {
-      this.lastMelodyDegree = Math.max(0, Math.min(4,
-        this.lastMelodyDegree + (this.step % 2 ? 1 : -1)));
-    }
-
     const shouldRest = this.controls.complexity < 0.28 && chordPosition % 2 === 1;
     if (!shouldRest) {
-      const octave = scene.brightness < 0.28 ? 12 : scene.brightness > 0.72 ? 24 : 19;
-      const note = key + PENTATONIC[this.lastMelodyDegree] + octave;
-      const volume = 0.075 + scene.saturation * 0.025;
-      const duration = 0.42 + warmth * 0.28 + this.controls.space * 0.2;
-      this.triggerVoice(frequency(note), volume, duration,
-        warmth > 0.38 ? 'triangle' : 'sine', cutoff, 0.018 + warmth * 0.025);
+      const voiceVolume = 0.085 / Math.sqrt(scenes.length);
+      scenes.forEach(([id, scene], voiceIndex) => {
+        const imageTarget = Math.min(4, Math.floor((((scene.hue % 360) + 360) % 360) / 72));
+        const previous = this.lastMelodyDegrees.get(id) ?? imageTarget;
+        const maxMove = this.controls.complexity > 0.72 ? 2 : 1;
+        const degree = previous + Math.max(-maxMove, Math.min(maxMove, imageTarget - previous));
+        this.lastMelodyDegrees.set(id, degree);
+        const octave = scene.brightness < 0.28 ? 7 : scene.brightness > 0.72 ? 24 : 12;
+        const note = key + PENTATONIC[degree] + octave;
+        const cutoff = 900 + (1 - warmth) * 2100 + scene.brightness * 900 + scene.texture * 650;
+        const duration = 0.44 + warmth * 0.3 + this.controls.space * 0.22 + voiceIndex * 0.025;
+        this.triggerVoice(frequency(note), voiceVolume + scene.saturation * 0.012, duration,
+          warmth > 0.38 ? 'triangle' : 'sine', cutoff, 0.02 + warmth * 0.025);
+      });
     }
     this.step++;
   }
 
   stop(release = 0.2) {
-    this.scene = null;
+    this.touchScenes.clear();
+    this.lastMelodyDegrees.clear();
     this.step = Math.floor(this.variation * 16);
     if (!this.context) return;
     const now = this.context.currentTime;
