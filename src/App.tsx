@@ -4,10 +4,19 @@ import { ChordEngine, type Instrument, type Placement } from './music';
 
 const music = new ChordEngine();
 const INSTRUMENTS: Array<{ id: Instrument; label: string; color: string }> = [
-  { id: 'keys', label: 'Keyboard', color: '#8be9fd' },
-  { id: 'bass', label: 'Bass', color: '#bd93f9' },
-  { id: 'drums', label: 'Percussion', color: '#ffb86c' },
+  { id: 'keys', label: '🎹 Keyboard', color: '#8be9fd' },
+  { id: 'bass', label: '🎸 Bass', color: '#bd93f9' },
+  { id: 'drums', label: '🥁 Percussion', color: '#ffb86c' },
 ];
+
+function Slider({ min = 0, max = 100, value, onChange }: {
+  min?: number; max?: number; value: number; onChange: (value: number) => void;
+}) {
+  const progress = ((value - min) / (max - min)) * 100;
+  return <input type="range" min={min} max={max} value={value}
+    style={{ '--range-progress': `${progress}%` } as React.CSSProperties}
+    onChange={(event) => onChange(+event.target.value)} />;
+}
 
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -27,7 +36,10 @@ export default function App() {
   const [selected, setSelected] = useState<Instrument>('keys');
   const [radius, setRadius] = useState(50);
   const [controls, setControls] = useState({
-    tempo: 96, pitch: 0, complexity: 52, space: 58, keys: 78, bass: 68, drums: 60,
+    tempo: 96, pitch: 0, complexity: 52, space: 58,
+    keys: 78, keysTone: 62, keysSustain: 55,
+    bass: 68, bassDepth: 70, bassMovement: 45,
+    drums: 60, drumPunch: 70, drumDensity: 50,
   });
 
   const draw = () => {
@@ -102,8 +114,14 @@ export default function App() {
       complexity: controls.complexity / 100,
       space: controls.space / 100,
       keys: controls.keys / 100,
+      keysTone: controls.keysTone / 100,
+      keysSustain: controls.keysSustain / 100,
       bass: controls.bass / 100,
+      bassDepth: controls.bassDepth / 100,
+      bassMovement: controls.bassMovement / 100,
       drums: controls.drums / 100,
+      drumPunch: controls.drumPunch / 100,
+      drumDensity: controls.drumDensity / 100,
     });
     if (placementsRef.current.length) { stopBeat(); startBeat(); }
   }, [controls]);
@@ -221,7 +239,7 @@ export default function App() {
         </div>
         <label><span>Circle size <output>{radius}px</output></span>
           <small>Larger circles sample more of the photo and play louder.</small>
-          <input type="range" min="28" max="90" value={radius} onChange={(e) => setRadius(+e.target.value)} />
+          <Slider min={28} max={90} value={radius} onChange={setRadius} />
         </label>
         <div className="placementActions">
           <button disabled={!placements.length} onClick={() => updatePlacements(placementsRef.current.slice(0, -1))}>Undo</button>
@@ -229,19 +247,30 @@ export default function App() {
           <span>{placements.length}/12 placed</span>
         </div>
         <small className="loopHint">Tap a placed circle to remove it from the loop.</small>
-        {([
-          ['keys', 'Keyboard', 'Melodic voices taken from the sampled colors.'],
-          ['bass', 'Bass', 'Low notes following the underlying chord progression.'],
-          ['drums', 'Percussion', 'Dark areas make kicks, mid tones make snares, and bright areas make hats.'],
-        ] as const).map(([key, label, help]) => <label key={key}><span>{label} <output>{controls[key]}%</output></span>
-          <small>{help}</small><input type="range" min="0" max="100" value={controls[key]}
-            onChange={(e) => setControl(key, +e.target.value)} /></label>)}
-        <label><span>Tempo <output>{controls.tempo} BPM</output></span><small>Sets the speed of the loop.</small>
-          <input type="range" min="55" max="160" value={controls.tempo} onChange={(e) => setControl('tempo', +e.target.value)} /></label>
-        <label><span>Complexity <output>{controls.complexity}%</output></span><small>Moves from spacious patterns to busier phrases.</small>
-          <input type="range" min="0" max="100" value={controls.complexity} onChange={(e) => setControl('complexity', +e.target.value)} /></label>
-        <label><span>Space <output>{controls.space}%</output></span><small>Adds echo and atmospheric depth.</small>
-          <input type="range" min="0" max="100" value={controls.space} onChange={(e) => setControl('space', +e.target.value)} /></label>
+        <div className="instrumentModule keysModule"><strong>🎹 Keyboard</strong>
+          {([['keys', 'Volume', 'Sets the level of every keyboard circle.'], ['keysTone', 'Tone', 'Moves from soft keys to a brighter synth.'],
+            ['keysSustain', 'Sustain', 'Controls how long keyboard notes ring.']] as const).map(([key, label, help]) =>
+            <label key={key}><span>{label} <output>{controls[key]}%</output></span><small>{help}</small>
+              <Slider value={controls[key]} onChange={(value) => setControl(key, value)} /></label>)}</div>
+        <div className="instrumentModule bassModule"><strong>🎸 Bass</strong>
+          {([['bass', 'Volume', 'Sets the level of every bass circle.'], ['bassDepth', 'Depth', 'Pushes bass notes into a lower register.'],
+            ['bassMovement', 'Movement', 'Adds faster notes and melodic variation.']] as const).map(([key, label, help]) =>
+            <label key={key}><span>{label} <output>{controls[key]}%</output></span><small>{help}</small>
+              <Slider value={controls[key]} onChange={(value) => setControl(key, value)} /></label>)}</div>
+        <div className="instrumentModule drumsModule"><strong>🥁 Percussion</strong>
+          {([['drums', 'Volume', 'Sets the overall drum level.'], ['drumPunch', 'Punch', 'Strengthens kick impact and snare body.'],
+            ['drumDensity', 'Density', 'Adds more subdivisions to bright percussion circles.']] as const).map(([key, label, help]) =>
+            <label key={key}><span>{label} <output>{controls[key]}%</output></span><small>{help}</small>
+              <Slider value={controls[key]} onChange={(value) => setControl(key, value)} /></label>)}</div>
+        <div className="instrumentModule globalModule"><strong>Composition</strong>
+          <label><span>Tempo <output>{controls.tempo} BPM</output></span><small>Sets the speed of the loop.</small>
+            <Slider min={55} max={160} value={controls.tempo} onChange={(value) => setControl('tempo', value)} /></label>
+          <label><span>Pitch <output>{controls.pitch > 0 ? '+' : ''}{controls.pitch} st</output></span><small>Transposes the complete arrangement.</small>
+            <Slider min={-12} max={12} value={controls.pitch} onChange={(value) => setControl('pitch', value)} /></label>
+          <label><span>Variation <output>{controls.complexity}%</output></span><small>Moves from spacious patterns to busier phrases.</small>
+            <Slider value={controls.complexity} onChange={(value) => setControl('complexity', value)} /></label>
+          <label><span>Space <output>{controls.space}%</output></span><small>Adds echo and atmospheric depth.</small>
+            <Slider value={controls.space} onChange={(value) => setControl('space', value)} /></label></div>
       </section>
 
       <section className={`stage ${hasImage ? 'hasImage' : ''}`}>

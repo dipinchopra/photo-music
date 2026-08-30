@@ -22,8 +22,14 @@ type MusicControls = {
   complexity: number;
   space: number;
   keys: number;
+  keysTone: number;
+  keysSustain: number;
   bass: number;
+  bassDepth: number;
+  bassMovement: number;
   drums: number;
+  drumPunch: number;
+  drumDensity: number;
 };
 
 const C2 = 65.406391;
@@ -46,7 +52,10 @@ export class ChordEngine {
   private step = 0;
   private variation = 0.5;
   private controls: MusicControls = {
-    transpose: 0, complexity: 0.5, space: 0.55, keys: 0.78, bass: 0.68, drums: 0.45,
+    transpose: 0, complexity: 0.5, space: 0.55,
+    keys: 0.78, keysTone: 0.62, keysSustain: 0.55,
+    bass: 0.68, bassDepth: 0.7, bassMovement: 0.45,
+    drums: 0.6, drumPunch: 0.7, drumDensity: 0.5,
   };
 
   setVariation(seed: number) {
@@ -192,15 +201,20 @@ export class ChordEngine {
       if (!rest) {
         const note = key + PENTATONIC[degree] + register;
         const volume = 0.085 * placement.level * this.controls.keys / Math.sqrt(Math.max(1, keys.length));
-        this.tone(hz(note), volume, 0.5 + this.controls.space * 0.35, 'triangle',
-          1200 + placement.tone.brightness * 1900 + placement.tone.texture * 800, 0.018, 0.4);
+        this.tone(hz(note), volume, 0.28 + this.controls.keysSustain * 0.72 + this.controls.space * 0.18,
+          this.controls.keysTone > 0.72 ? 'sawtooth' : 'triangle',
+          700 + this.controls.keysTone * 2600 + placement.tone.brightness * 900,
+          0.012 + (1 - this.controls.keysTone) * 0.035, 0.4);
       }
     });
 
-    if (beat % (this.controls.complexity > 0.65 ? 2 : 4) === 0) {
+    const bassInterval = this.controls.bassMovement > 0.7 ? 1 : this.controls.bassMovement > 0.32 ? 2 : 4;
+    if (beat % bassInterval === 0) {
       bass.forEach((placement) => {
         const colorOffset = PENTATONIC[Math.min(4, Math.floor(placement.tone.hue / 72))];
-        const note = key + root + (this.controls.complexity > 0.72 ? colorOffset % 5 : 0) + 12;
+        const bassRegister = this.controls.bassDepth > 0.66 ? 0 : this.controls.bassDepth > 0.32 ? 7 : 12;
+        const melodicOffset = this.controls.bassMovement > 0.58 ? colorOffset % 5 : 0;
+        const note = key + root + melodicOffset + bassRegister;
         this.tone(hz(note), 0.12 * placement.level * this.controls.bass / Math.sqrt(Math.max(1, bass.length)),
           0.58, 'sine', 650 + placement.tone.texture * 350, 0.012, 0.08);
       });
@@ -214,16 +228,16 @@ export class ChordEngine {
       if (brightness < 0.34) {
         const kickPatterns = [[0, 4], [0, 3, 4, 6], [0, 4, 7]];
         const pattern = this.controls.complexity < 0.35 ? [0, 4] : kickPatterns[variation];
-        if (pattern.includes(beat)) this.kick(0.19 * volume);
+        if (pattern.includes(beat)) this.kick((0.11 + this.controls.drumPunch * 0.14) * volume);
       } else if (brightness < 0.68) {
         const snarePatterns = [[2, 6], [2, 6, 7], [2, 5, 6]];
         const pattern = this.controls.complexity < 0.35 ? [2, 6] : snarePatterns[variation];
-        if (pattern.includes(beat)) this.snare(0.085 * volume, placement.tone.saturation);
+        if (pattern.includes(beat)) this.snare((0.05 + this.controls.drumPunch * 0.075) * volume, placement.tone.saturation);
       } else {
         const sparse = [1, 3, 5, 7];
         const dense = variation === 0 ? [0, 1, 2, 3, 4, 5, 6, 7]
           : variation === 1 ? [0, 1, 3, 4, 5, 7] : [1, 2, 3, 5, 6, 7];
-        const pattern = placement.tone.texture > 0.38 && this.controls.complexity > 0.45 ? dense : sparse;
+        const pattern = placement.tone.texture * 0.45 + this.controls.drumDensity * 0.75 > 0.58 ? dense : sparse;
         if (pattern.includes(beat)) {
           const open = placement.tone.texture > 0.62 && beat === 7;
           this.noise((open ? 0.036 : 0.026) * volume, true, open);
