@@ -68,7 +68,7 @@ h1 { margin: 0; font-size: clamp(28px, 5vw, 52px); line-height: 0.98; }
   width: 100%;
   height: 100%;
   display: block;
-  touch-action: pan-y;
+  touch-action: none;
   cursor: crosshair;
 }
 
@@ -100,6 +100,7 @@ h1 { margin: 0; font-size: clamp(28px, 5vw, 52px); line-height: 0.98; }
 }
 
 .controls {
+  grid-area: controls;
   display: grid;
   align-content: center;
   gap: 24px;
@@ -111,10 +112,13 @@ h1 { margin: 0; font-size: clamp(28px, 5vw, 52px); line-height: 0.98; }
 
 .instrument {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(250px, 320px);
+  grid-template-columns: minmax(250px, 320px) minmax(0, 1fr);
+  grid-template-areas: "controls image";
   gap: 18px;
   min-height: 66vh;
 }
+
+.stage { grid-area: image; }
 
 .controls label { display: grid; gap: 8px; }
 .controls label > span {
@@ -174,7 +178,10 @@ footer {
     border-radius: 20px;
   }
   .uploadButton { padding: 10px 13px; font-size: 13px; }
-  .instrument { grid-template-columns: 1fr; }
+  .instrument {
+    grid-template-columns: 1fr;
+    grid-template-areas: "image" "controls";
+  }
   .controls {
     width: calc(100% - 32px);
     margin-inline: auto;

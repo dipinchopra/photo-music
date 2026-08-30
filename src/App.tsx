@@ -285,9 +285,7 @@ export default function App() {
           onPointerDown={(e) => {
             // iOS requires AudioContext creation/resume directly in a user gesture.
             void music.unlock();
-            if (e.pointerType !== 'touch') {
-              e.currentTarget.setPointerCapture(e.pointerId);
-            }
+            e.currentTarget.setPointerCapture(e.pointerId);
             activateAt(e.clientX, e.clientY);
           }}
           onPointerMove={(e) => {
@@ -347,7 +345,7 @@ export default function App() {
         <span>Hue → chord</span>
         <span>Brightness → octave</span>
         <span>Saturation → richness</span>
-        <span>Texture spectrum → shimmer</span>
+        <span>Texture spectrum → rhythm</span>
       </footer>
     </main>
   );

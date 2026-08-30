@@ -138,6 +138,43 @@ export class ChordEngine {
     };
   }
 
+  private triggerKick() {
+    if (!this.context || !this.master) return;
+    const now = this.context.currentTime;
+    const osc = this.context.createOscillator();
+    const gain = this.context.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(115, now);
+    osc.frequency.exponentialRampToValueAtTime(48, now + 0.13);
+    gain.gain.setValueAtTime(0.11, now);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.24);
+    osc.connect(gain);
+    gain.connect(this.master);
+    osc.start(now);
+    osc.stop(now + 0.26);
+  }
+
+  private triggerHat(texture: number, accent: boolean) {
+    if (!this.context || !this.master) return;
+    const now = this.context.currentTime;
+    const duration = accent ? 0.075 : 0.045;
+    const buffer = this.context.createBuffer(1, Math.ceil(this.context.sampleRate * duration), this.context.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+    const noise = this.context.createBufferSource();
+    const filter = this.context.createBiquadFilter();
+    const gain = this.context.createGain();
+    noise.buffer = buffer;
+    filter.type = 'highpass';
+    filter.frequency.value = 4800 + texture * 3200;
+    gain.gain.setValueAtTime((accent ? 0.026 : 0.015) + texture * 0.012, now);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+    noise.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.master);
+    noise.start(now);
+  }
+
   pulse() {
     if (!this.scene) return;
     const scene = this.scene;
@@ -160,6 +197,18 @@ export class ChordEngine {
     if (chordPosition % 4 === 0) {
       this.triggerVoice(frequency(key + chordRoot - 12), 0.065, 0.75,
         warmth > 0.45 ? 'triangle' : 'sine', 620, 0.025);
+    }
+
+    // Percussion stays subordinate to the melody: image texture opens the
+    // hi-hat while Complexity determines how many subdivisions are played.
+    if (chordPosition === 0 || (chordPosition === 4 && this.controls.complexity > 0.22)) {
+      this.triggerKick();
+    }
+    if (this.controls.complexity > 0.18 && chordPosition % 2 === 1) {
+      this.triggerHat(scene.texture, chordPosition === 3 || chordPosition === 7);
+    }
+    if (this.controls.complexity > 0.76 && chordPosition % 2 === 0 && chordPosition !== 0) {
+      this.triggerHat(scene.texture * 0.8, false);
     }
 
     const imageTarget = Math.min(4, Math.floor((((scene.hue % 360) + 360) % 360) / 72));
