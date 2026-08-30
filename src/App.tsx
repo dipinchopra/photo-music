@@ -26,6 +26,8 @@ export default function App() {
   const beatRef = useRef<number | null>(null);
   const tempoRef = useRef(96);
   const pulseRef = useRef(0);
+  const visualHitsRef = useRef<Record<Instrument, number>>({ keys: 0, bass: 0, drums: 0 });
+  const phaseRef = useRef(0);
   const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
   const dragRef = useRef<{
     id: number; offsetX: number; offsetY: number; startX: number; startY: number; moved: boolean;
@@ -70,6 +72,49 @@ export default function App() {
     const drawnPlacements = livePlacementRef.current
       ? [...placementsRef.current, livePlacementRef.current]
       : placementsRef.current;
+
+    if (drawnPlacements.length) {
+      const hue = drawnPlacements.reduce((sum, item) => sum + item.tone.hue, 0) / drawnPlacements.length;
+      ctx.save();
+      ctx.globalCompositeOperation = 'soft-light';
+      ctx.globalAlpha = 0.045 + visualHitsRef.current.keys * 0.025;
+      ctx.fillStyle = `hsl(${hue} 75% 48%)`;
+      ctx.fillRect(0, 0, width, height);
+      ctx.restore();
+
+      drawnPlacements.forEach((placement) => {
+        const strength = visualHitsRef.current[placement.instrument];
+        if (strength < 0.015) return;
+        const x = placement.x * dpr;
+        const y = placement.y * dpr;
+        const r = placement.radius * dpr;
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.clip();
+        if (placement.instrument === 'keys') {
+          const offset = (2 + placement.tone.texture * 6) * strength * dpr;
+          ctx.globalCompositeOperation = 'screen';
+          ctx.globalAlpha = 0.12 * strength;
+          ctx.drawImage(image, dx + offset, dy, dw, dh);
+          ctx.drawImage(image, dx - offset, dy, dw, dh);
+        } else if (placement.instrument === 'bass') {
+          const scale = 1 + 0.035 * strength;
+          ctx.globalAlpha = 0.48 * strength;
+          ctx.translate(x, y);
+          ctx.scale(scale, scale);
+          ctx.translate(-x, -y);
+          ctx.drawImage(image, dx, dy, dw, dh);
+        } else {
+          const shake = (4 + controls.drumPunch * 0.055) * strength * dpr;
+          ctx.globalCompositeOperation = 'screen';
+          ctx.globalAlpha = 0.2 * strength;
+          ctx.drawImage(image, dx + (phaseRef.current % 2 ? shake : -shake), dy, dw, dh);
+        }
+        ctx.restore();
+      });
+    }
+
     if (drawnPlacements.length) {
       ctx.save();
       ctx.fillStyle = 'rgba(0,0,0,.38)';
@@ -96,6 +141,13 @@ export default function App() {
       ctx.beginPath();
       ctx.arc(x, y, r * (1 + pulseRef.current * 0.08), 0, Math.PI * 2);
       ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.globalAlpha = 0.82;
+      ctx.lineWidth = 3 * dpr;
+      ctx.beginPath();
+      ctx.arc(x, y, r + 5 * dpr, -Math.PI / 2,
+        -Math.PI / 2 + Math.PI * 2 * (phaseRef.current / 8));
+      ctx.stroke();
       ctx.restore();
     });
   };
@@ -103,7 +155,9 @@ export default function App() {
   const startBeat = () => {
     if (beatRef.current) return;
     beatRef.current = window.setInterval(() => {
-      music.pulse();
+      const hits = music.pulse();
+      hits.forEach((instrument) => { visualHitsRef.current[instrument] = 1; });
+      phaseRef.current = (phaseRef.current + 1) % 8;
       pulseRef.current = 1;
     }, 30000 / tempoRef.current);
   };
@@ -137,6 +191,9 @@ export default function App() {
     let frame = 0;
     const animate = () => {
       pulseRef.current *= 0.9;
+      visualHitsRef.current.keys *= 0.88;
+      visualHitsRef.current.bass *= 0.9;
+      visualHitsRef.current.drums *= 0.76;
       draw();
       frame = requestAnimationFrame(animate);
     };

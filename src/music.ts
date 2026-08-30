@@ -184,8 +184,9 @@ export class ChordEngine {
     this.tone(175 + saturation * 45, volume * 0.42, 0.13, 'triangle', 520, 0.004, 0.08);
   }
 
-  pulse() {
-    if (!this.placements.length) return;
+  pulse(): Instrument[] {
+    if (!this.placements.length) return [];
+    const hits = new Set<Instrument>();
     const key = KEYS[Math.floor(this.variation * KEYS.length) % KEYS.length] + this.controls.transpose;
     const progression = PROGRESSIONS[Math.floor(this.variation * PROGRESSIONS.length) % PROGRESSIONS.length];
     const root = progression[Math.floor(this.step / 8) % progression.length];
@@ -198,6 +199,7 @@ export class ChordEngine {
     // A slow pad supplies the harmonic bed that makes the image notes feel
     // like a melody rather than isolated pitches.
     if (keys.length && beat === 0) {
+      hits.add('keys');
       const third = root === 9 ? 3 : 4;
       [0, third, 7].forEach((interval, index) => {
         this.tone(hz(key + root + interval + 24),
@@ -212,6 +214,7 @@ export class ChordEngine {
       const register = placement.tone.brightness > 0.66 ? 36 : placement.tone.brightness < 0.3 ? 24 : 31;
       const rest = this.controls.complexity < 0.35 && (this.step + index) % 2 === 1;
       if (!rest) {
+        hits.add('keys');
         const note = key + PENTATONIC[degree] + register;
         const volume = 0.085 * placement.level * this.controls.keys / Math.sqrt(Math.max(1, keys.length));
         this.tone(hz(note), volume, 0.28 + this.controls.keysSustain * 0.72 + this.controls.space * 0.18,
@@ -223,6 +226,7 @@ export class ChordEngine {
 
     const bassInterval = this.controls.bassMovement > 0.7 ? 1 : this.controls.bassMovement > 0.32 ? 2 : 4;
     if (beat % bassInterval === 0) {
+      if (bass.length) hits.add('bass');
       bass.forEach((placement) => {
         const colorOffset = PENTATONIC[Math.min(4, Math.floor(placement.tone.hue / 72))];
         const bassRegister = this.controls.bassDepth > 0.66 ? 0 : this.controls.bassDepth > 0.32 ? 7 : 12;
@@ -243,23 +247,31 @@ export class ChordEngine {
         const pattern = this.controls.fourOnFloor
           ? [0, 2, 4, 6]
           : this.controls.complexity < 0.35 ? [0, 4] : kickPatterns[variation];
-        if (pattern.includes(beat)) this.kick((0.11 + this.controls.drumPunch * 0.14) * volume);
+        if (pattern.includes(beat)) {
+          hits.add('drums');
+          this.kick((0.11 + this.controls.drumPunch * 0.14) * volume);
+        }
       } else if (brightness < 0.68) {
         const snarePatterns = [[2, 6], [2, 6, 7], [2, 5, 6]];
         const pattern = this.controls.complexity < 0.35 ? [2, 6] : snarePatterns[variation];
-        if (pattern.includes(beat)) this.snare((0.05 + this.controls.drumPunch * 0.075) * volume, placement.tone.saturation);
+        if (pattern.includes(beat)) {
+          hits.add('drums');
+          this.snare((0.05 + this.controls.drumPunch * 0.075) * volume, placement.tone.saturation);
+        }
       } else {
         const sparse = [1, 3, 5, 7];
         const dense = variation === 0 ? [0, 1, 2, 3, 4, 5, 6, 7]
           : variation === 1 ? [0, 1, 3, 4, 5, 7] : [1, 2, 3, 5, 6, 7];
         const pattern = placement.tone.texture * 0.45 + this.controls.drumDensity * 0.75 > 0.58 ? dense : sparse;
         if (pattern.includes(beat)) {
+          hits.add('drums');
           const open = placement.tone.texture > 0.62 && beat === 7;
           this.noise((open ? 0.036 : 0.026) * volume, true, open);
         }
       }
     });
     this.step++;
+    return [...hits];
   }
 
   stop(release = 0.12) {
