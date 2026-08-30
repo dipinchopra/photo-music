@@ -69,16 +69,26 @@ export class ChordEngine {
   private scene: ChordInfo | null = null;
   private step = 0;
   private controls: MusicControls = { transpose: 0, complexity: 0.55, warmth: 0.65, space: 0.3 };
+  private variation = 0.5;
+
+  setVariation(seed: number) {
+    this.variation = seed;
+    this.step = Math.floor(seed * 32);
+    if (this.delay) this.delay.delayTime.value = 0.14 + ((seed * 0.19) % 0.13) + this.controls.space * 0.28;
+  }
 
   configure(next: MusicControls) {
     this.controls = next;
     if (this.feedback) this.feedback.gain.value = Math.min(0.52, next.space * 0.48);
-    if (this.delay) this.delay.delayTime.value = 0.16 + next.space * 0.32;
+    if (this.delay) this.delay.delayTime.value = 0.14 + ((this.variation * 0.19) % 0.13) + next.space * 0.28;
   }
 
   async unlock() {
     if (!this.context) {
-      this.context = new AudioContext();
+      const AudioContextClass = window.AudioContext ||
+        (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioContextClass) return;
+      this.context = new AudioContextClass();
       this.master = this.context.createGain();
       this.delay = this.context.createDelay(1);
       this.feedback = this.context.createGain();
@@ -91,6 +101,12 @@ export class ChordEngine {
       this.master.connect(this.context.destination);
     }
     if (this.context.state === 'suspended') await this.context.resume();
+
+    // A zero-length buffer source reliably completes iOS Safari's audio unlock.
+    const source = this.context.createBufferSource();
+    source.buffer = this.context.createBuffer(1, 1, this.context.sampleRate);
+    source.connect(this.context.destination);
+    source.start(0);
   }
 
   async play(chord: ChordInfo) {
@@ -108,8 +124,9 @@ export class ChordEngine {
     if (!this.context || !this.master || !this.scene) return;
     const now = this.context.currentTime;
     const scene = this.scene;
-    const smoothMotif = [0, 1, 2, 1, 0, 1, 3, 2];
-    const livelyMotif = [0, 2, 1, 3, 2, 4, 1, 3];
+    const variationOffset = Math.floor(this.variation * 5);
+    const smoothMotif = [0, 1, 2, 1, 0, 1, 3, 2].map((note) => note + variationOffset);
+    const livelyMotif = [0, 2, 1, 3, 2, 4, 1, 3].map((note) => note + variationOffset);
     const activity = scene.texture * 0.55 + this.controls.complexity * 0.75;
     const motif = activity > 0.62 ? livelyMotif : smoothMotif;
     const index = motif[this.step % motif.length] % scene.frequencies.length;
