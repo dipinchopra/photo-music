@@ -17,6 +17,7 @@ export default function App() {
   const tempoRef = useRef(96);
   const pulseRef = useRef(0);
   const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
+  const dragRef = useRef<{ id: number; offsetX: number; offsetY: number; moved: boolean } | null>(null);
   const nextIdRef = useRef(1);
 
   const [hasImage, setHasImage] = useState(false);
@@ -62,7 +63,7 @@ export default function App() {
       ctx.restore();
     }
 
-    placementsRef.current.forEach((placement, index) => {
+    placementsRef.current.forEach((placement) => {
       const config = INSTRUMENTS.find((item) => item.id === placement.instrument)!;
       const x = placement.x * dpr;
       const y = placement.y * dpr;
@@ -75,15 +76,6 @@ export default function App() {
       ctx.beginPath();
       ctx.arc(x, y, r * (1 + pulseRef.current * 0.08), 0, Math.PI * 2);
       ctx.stroke();
-      ctx.fillStyle = 'rgba(0,0,0,.58)';
-      ctx.beginPath();
-      ctx.arc(x, y, 13 * dpr, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = config.color;
-      ctx.font = `600 ${10 * dpr}px system-ui`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(String(index + 1), x, y);
       ctx.restore();
     });
   };
@@ -135,18 +127,24 @@ export default function App() {
     setControls((current) => ({ ...current, [name]: value }));
   };
 
-  const placeAt = async (clientX: number, clientY: number) => {
+  const canvasPoint = (clientX: number, clientY: number) => {
+    const rect = canvasRef.current!.getBoundingClientRect();
+    return {
+      x: Math.max(0, Math.min(rect.width, clientX - rect.left)),
+      y: Math.max(0, Math.min(rect.height, clientY - rect.top)),
+    };
+  };
+
+  const sampleToneAt = (x: number, y: number, sampleRadius: number) => {
     const canvas = canvasRef.current;
     const image = imageRef.current;
-    if (!canvas || !image || !hasImage) return;
+    if (!canvas || !image) return null;
     const rect = canvas.getBoundingClientRect();
-    const x = Math.max(0, Math.min(rect.width, clientX - rect.left));
-    const y = Math.max(0, Math.min(rect.height, clientY - rect.top));
     const off = document.createElement('canvas');
     off.width = canvas.width;
     off.height = canvas.height;
     const ctx = off.getContext('2d', { willReadFrequently: true });
-    if (!ctx) return;
+    if (!ctx) return null;
     const imgRatio = image.naturalWidth / image.naturalHeight;
     const canvasRatio = off.width / off.height;
     let dw = off.width, dh = off.height, dx = 0, dy = 0;
@@ -154,12 +152,22 @@ export default function App() {
     else { dw = off.height * imgRatio; dx = (off.width - dw) / 2; }
     ctx.drawImage(image, dx, dy, dw, dh);
     const dpr = off.width / rect.width;
-    const sample = sampleAverageColor(ctx, x * dpr, y * dpr, Math.max(12, radius * 0.35) * dpr);
+    const sample = sampleAverageColor(ctx, x * dpr, y * dpr, Math.max(12, sampleRadius * 0.35) * dpr);
+    return { hue: sample.h, saturation: sample.s, brightness: sample.l, texture: sample.texture };
+  };
+
+  const placeAt = async (clientX: number, clientY: number) => {
+    const canvas = canvasRef.current;
+    const image = imageRef.current;
+    if (!canvas || !image || !hasImage) return;
+    const { x, y } = canvasPoint(clientX, clientY);
+    const tone = sampleToneAt(x, y, radius);
+    if (!tone) return;
     const placement: Placement = {
       id: nextIdRef.current++, x, y, radius,
       level: 0.25 + ((radius - 28) / 62) * 0.75,
       instrument: selected,
-      tone: { hue: sample.h, saturation: sample.s, brightness: sample.l, texture: sample.texture },
+      tone,
     };
     const next = [...placementsRef.current, placement].slice(-12);
     placementsRef.current = next;
@@ -237,14 +245,45 @@ export default function App() {
         {!hasImage && <label className="emptyState"><strong>Choose a photo</strong><span>Then place instruments onto its colors and textures.</span>
           <input type="file" accept="image/*" onChange={(e) => upload(e.target.files?.[0])} /></label>}
         <canvas ref={canvasRef} className="canvas placementCanvas"
-          onPointerDown={(e) => { void music.unlock(); pointerStartRef.current = { x: e.clientX, y: e.clientY }; }}
+          onPointerDown={(e) => {
+            void music.unlock();
+            const point = canvasPoint(e.clientX, e.clientY);
+            const hit = [...placementsRef.current].reverse().find((placement) =>
+              Math.hypot(point.x - placement.x, point.y - placement.y) <= placement.radius);
+            if (hit) {
+              e.currentTarget.setPointerCapture(e.pointerId);
+              dragRef.current = { id: hit.id, offsetX: point.x - hit.x, offsetY: point.y - hit.y, moved: false };
+            } else pointerStartRef.current = { x: e.clientX, y: e.clientY };
+          }}
+          onPointerMove={(e) => {
+            const drag = dragRef.current;
+            if (!drag) return;
+            const point = canvasPoint(e.clientX, e.clientY);
+            drag.moved = true;
+            const next = placementsRef.current.map((placement) => placement.id === drag.id
+              ? { ...placement, x: point.x - drag.offsetX, y: point.y - drag.offsetY }
+              : placement);
+            placementsRef.current = next;
+            setPlacements(next);
+          }}
           onPointerUp={(e) => {
+            const drag = dragRef.current;
+            if (drag) {
+              dragRef.current = null;
+              const next = placementsRef.current.map((placement) => {
+                if (placement.id !== drag.id) return placement;
+                const tone = sampleToneAt(placement.x, placement.y, placement.radius);
+                return tone ? { ...placement, tone } : placement;
+              });
+              updatePlacements(next);
+              return;
+            }
             const start = pointerStartRef.current;
             pointerStartRef.current = null;
             if (start && Math.hypot(e.clientX - start.x, e.clientY - start.y) < 12) void placeAt(e.clientX, e.clientY);
-          }} />
+          }}
+          onPointerCancel={() => { dragRef.current = null; pointerStartRef.current = null; }} />
         {hasImage && !placements.length && <div className="hint">Choose an instrument, set its size, then tap the photo</div>}
-        {!!placements.length && <div className="chordPill">{placements.length} layers</div>}
       </section>
     </div>
     <footer><span>Circle size → volume</span><span>Color → notes</span><span>Texture → rhythm</span></footer>
