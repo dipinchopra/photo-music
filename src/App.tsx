@@ -3,7 +3,6 @@ import { sampleAverageColor } from './color';
 import { ChordEngine, colorToChord } from './music';
 
 type Point = { x: number; y: number };
-type VisualParticle = Point & { vx: number; vy: number; life: number; size: number; hue: number };
 
 const music = new ChordEngine();
 
@@ -15,7 +14,7 @@ export default function App() {
   const lastChordRef = useRef('');
   const beatRef = useRef<number | null>(null);
   const tempoRef = useRef(100);
-  const visualRef = useRef({ pulse: 0, hue: 200, texture: 0, step: 0, particles: [] as VisualParticle[] });
+  const visualRef = useRef({ pulse: 0, hue: 200, texture: 0, step: 0 });
 
   const [hasImage, setHasImage] = useState(false);
   const [isActive, setIsActive] = useState(false);
@@ -99,13 +98,6 @@ export default function App() {
 
       ctx.save();
       ctx.globalCompositeOperation = 'screen';
-      visual.particles.forEach((particle) => {
-        ctx.globalAlpha = Math.max(0, particle.life) * 0.72;
-        ctx.fillStyle = `hsl(${particle.hue} 90% 65%)`;
-        ctx.beginPath();
-        ctx.arc(particle.x * dpr, particle.y * dpr, particle.size * dpr, 0, Math.PI * 2);
-        ctx.fill();
-      });
       ctx.globalAlpha = visual.pulse * 0.55;
       ctx.strokeStyle = `hsl(${visual.hue} 95% 70%)`;
       ctx.lineWidth = Math.max(1, 2 * dpr);
@@ -132,22 +124,8 @@ export default function App() {
       if (!playingRef.current) return;
       music.pulse();
       const visual = visualRef.current;
-      const point = pointRef.current;
       visual.pulse = 1;
       visual.step++;
-      if (point) {
-        const count = 3 + Math.round(visual.texture * 8 + controls.complexity / 22);
-        for (let i = 0; i < count; i++) {
-          const angle = Math.random() * Math.PI * 2;
-          const speed = 0.35 + Math.random() * (1.2 + visual.texture * 2.5);
-          visual.particles.push({
-            x: point.x, y: point.y,
-            vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
-            life: 1, size: 1.2 + Math.random() * 3.8,
-            hue: (visual.hue + Math.random() * 70 - 35 + 360) % 360,
-          });
-        }
-      }
       if ('vibrate' in navigator) navigator.vibrate(8);
     }, 30000 / tempoRef.current); // eighth-note clock
   };
@@ -177,14 +155,6 @@ export default function App() {
     const animate = () => {
       const visual = visualRef.current;
       visual.pulse *= 0.91;
-      visual.particles.forEach((particle) => {
-        particle.x += particle.vx;
-        particle.y += particle.vy;
-        particle.vx *= 0.985;
-        particle.vy *= 0.985;
-        particle.life -= 0.018 + visual.texture * 0.01;
-      });
-      visual.particles = visual.particles.filter((particle) => particle.life > 0).slice(-90);
       draw();
       frame = requestAnimationFrame(animate);
     };
@@ -257,7 +227,6 @@ export default function App() {
     setChord('');
     stopBeat();
     music.stop(0.04);
-    visualRef.current.particles = [];
     visualRef.current.pulse = 0;
     pointRef.current = null;
     requestAnimationFrame(draw);
@@ -272,7 +241,6 @@ export default function App() {
       const variation = crypto.getRandomValues(new Uint32Array(1))[0] / 0xffffffff;
       music.setVariation(variation);
       visualRef.current.step = Math.floor(variation * 10000);
-      visualRef.current.particles = [];
       setHasImage(true);
       requestAnimationFrame(draw);
       URL.revokeObjectURL(url);
