@@ -17,7 +17,9 @@ export default function App() {
   const tempoRef = useRef(96);
   const pulseRef = useRef(0);
   const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
-  const dragRef = useRef<{ id: number; offsetX: number; offsetY: number; moved: boolean } | null>(null);
+  const dragRef = useRef<{
+    id: number; offsetX: number; offsetY: number; startX: number; startY: number; moved: boolean;
+  } | null>(null);
   const nextIdRef = useRef(1);
 
   const [hasImage, setHasImage] = useState(false);
@@ -55,7 +57,7 @@ export default function App() {
       ctx.fillStyle = 'rgba(0,0,0,.38)';
       ctx.beginPath();
       ctx.rect(0, 0, width, height);
-      placementsRef.current.forEach((placement) => {
+      placementsRef.current.filter((placement) => placement.active).forEach((placement) => {
         ctx.moveTo((placement.x + placement.radius) * dpr, placement.y * dpr);
         ctx.arc(placement.x * dpr, placement.y * dpr, placement.radius * dpr, 0, Math.PI * 2);
       });
@@ -69,12 +71,14 @@ export default function App() {
       const y = placement.y * dpr;
       const r = placement.radius * dpr;
       ctx.save();
+      ctx.globalAlpha = placement.active ? 1 : 0.3;
       ctx.strokeStyle = config.color;
       ctx.lineWidth = 2 * dpr;
+      if (!placement.active) ctx.setLineDash([6 * dpr, 7 * dpr]);
       ctx.shadowColor = config.color;
-      ctx.shadowBlur = (7 + pulseRef.current * 12) * dpr;
+      ctx.shadowBlur = placement.active ? (7 + pulseRef.current * 12) * dpr : 0;
       ctx.beginPath();
-      ctx.arc(x, y, r * (1 + pulseRef.current * 0.08), 0, Math.PI * 2);
+      ctx.arc(x, y, r * (1 + (placement.active ? pulseRef.current : 0) * 0.08), 0, Math.PI * 2);
       ctx.stroke();
       ctx.restore();
     });
@@ -167,6 +171,7 @@ export default function App() {
       id: nextIdRef.current++, x, y, radius,
       level: 0.25 + ((radius - 28) / 62) * 0.75,
       instrument: selected,
+      active: true,
       tone,
     };
     const next = [...placementsRef.current, placement].slice(-12);
@@ -226,6 +231,13 @@ export default function App() {
           <button disabled={!placements.length} onClick={() => updatePlacements([])}>Clear</button>
           <span>{placements.length}/12 placed</span>
         </div>
+        <div className="placementActions loopActions">
+          <button disabled={!placements.some((item) => item.active)}
+            onClick={() => updatePlacements(placementsRef.current.map((item) => ({ ...item, active: false })))}>Mute all</button>
+          <button disabled={!placements.some((item) => !item.active)}
+            onClick={() => updatePlacements(placementsRef.current.map((item) => ({ ...item, active: true })))}>Bring back</button>
+        </div>
+        <small className="loopHint">Tap a circle to mute it. Tap its dashed ghost to bring it back.</small>
         {([
           ['keys', 'Keyboard', 'Melodic voices taken from the sampled colors.'],
           ['bass', 'Bass', 'Low notes following the underlying chord progression.'],
@@ -252,13 +264,17 @@ export default function App() {
               Math.hypot(point.x - placement.x, point.y - placement.y) <= placement.radius);
             if (hit) {
               e.currentTarget.setPointerCapture(e.pointerId);
-              dragRef.current = { id: hit.id, offsetX: point.x - hit.x, offsetY: point.y - hit.y, moved: false };
+              dragRef.current = {
+                id: hit.id, offsetX: point.x - hit.x, offsetY: point.y - hit.y,
+                startX: e.clientX, startY: e.clientY, moved: false,
+              };
             } else pointerStartRef.current = { x: e.clientX, y: e.clientY };
           }}
           onPointerMove={(e) => {
             const drag = dragRef.current;
             if (!drag) return;
             const point = canvasPoint(e.clientX, e.clientY);
+            if (Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) < 7) return;
             drag.moved = true;
             const next = placementsRef.current.map((placement) => placement.id === drag.id
               ? { ...placement, x: point.x - drag.offsetX, y: point.y - drag.offsetY }
@@ -270,6 +286,12 @@ export default function App() {
             const drag = dragRef.current;
             if (drag) {
               dragRef.current = null;
+              if (!drag.moved) {
+                updatePlacements(placementsRef.current.map((placement) => placement.id === drag.id
+                  ? { ...placement, active: !placement.active }
+                  : placement));
+                return;
+              }
               const next = placementsRef.current.map((placement) => {
                 if (placement.id !== drag.id) return placement;
                 const tone = sampleToneAt(placement.x, placement.y, placement.radius);

@@ -164,6 +164,9 @@ h1 { margin: 0; font-size: clamp(28px, 5vw, 52px); line-height: 0.98; }
 .placementActions { display: flex; align-items: center; gap: 8px; }
 .placementActions button:disabled { opacity: .3; cursor: default; }
 .placementActions span { margin-left: auto; font-size: 11px; opacity: .45; }
+.loopActions { margin-top: -8px; }
+.loopActions button { flex: 1; }
+.loopHint { margin-top: -12px; color: rgba(255,255,255,.5); line-height: 1.4; }
 .placementCanvas { touch-action: pan-y; cursor: copy; }
 
 .hint {

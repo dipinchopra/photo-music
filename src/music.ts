@@ -14,6 +14,7 @@ export type Placement = {
   radius: number;
   level: number;
   instrument: Instrument;
+  active: boolean;
   tone: ImageTone;
 };
 
@@ -95,8 +96,8 @@ export class ChordEngine {
   async playPlacements(placements: Placement[]) {
     await this.unlock();
     const wasEmpty = this.placements.length === 0;
-    this.placements = placements;
-    if (wasEmpty && placements.length) this.pulse();
+    this.placements = placements.filter((placement) => placement.active);
+    if (wasEmpty && this.placements.length) this.pulse();
   }
 
   private tone(frequency: number, volume: number, duration: number, type: OscillatorType,
