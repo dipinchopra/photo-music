@@ -258,7 +258,7 @@ export default function App() {
   const placeAt = async (clientX: number, clientY: number) => {
     const placement = makePlacementAt(clientX, clientY, nextIdRef.current++);
     if (!placement) return;
-    const next = [...placementsRef.current, placement].slice(-12);
+    const next = [...placementsRef.current, placement];
     placementsRef.current = next;
     setPlacements(next);
     await music.playPlacements(next);
@@ -333,7 +333,7 @@ export default function App() {
         <div className="placementActions">
           <button disabled={!placements.length} onClick={() => updatePlacements(placementsRef.current.slice(0, -1))}>Undo</button>
           <button disabled={!placements.length} onClick={() => updatePlacements([])}>Clear</button>
-          <span>{placements.length}/12 placed</span>
+          <span>{placements.length} placed</span>
         </div>
         <small className="loopHint">Tap a placed circle to remove it from the loop.</small>
         <div className="instrumentModule keysModule"><strong>🎹 Keyboard</strong>
