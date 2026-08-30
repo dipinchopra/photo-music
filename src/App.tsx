@@ -25,7 +25,7 @@ export default function App() {
   const [selected, setSelected] = useState<Instrument>('keys');
   const [radius, setRadius] = useState(50);
   const [controls, setControls] = useState({
-    tempo: 96, pitch: 0, complexity: 52, space: 58, keys: 78, bass: 68, drums: 42,
+    tempo: 96, pitch: 0, complexity: 52, space: 58, keys: 78, bass: 68, drums: 60,
   });
 
   const draw = () => {
@@ -229,7 +229,7 @@ export default function App() {
         {([
           ['keys', 'Keyboard', 'Melodic voices taken from the sampled colors.'],
           ['bass', 'Bass', 'Low notes following the underlying chord progression.'],
-          ['drums', 'Percussion', 'Image texture and hue create a rhythmic pattern.'],
+          ['drums', 'Percussion', 'Dark areas make kicks, mid tones make snares, and bright areas make hats.'],
         ] as const).map(([key, label, help]) => <label key={key}><span>{label} <output>{controls[key]}%</output></span>
           <small>{help}</small><input type="range" min="0" max="100" value={controls[key]}
             onChange={(e) => setControl(key, +e.target.value)} /></label>)}

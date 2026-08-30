@@ -148,9 +148,9 @@ export class ChordEngine {
     osc.stop(now + 0.28);
   }
 
-  private noise(volume: number, bright: boolean) {
+  private noise(volume: number, bright: boolean, open = false) {
     if (!this.context || !this.output) return;
-    const duration = bright ? 0.055 : 0.15;
+    const duration = bright ? (open ? 0.24 : 0.055) : 0.16;
     const buffer = this.context.createBuffer(1, this.context.sampleRate * duration, this.context.sampleRate);
     const data = buffer.getChannelData(0);
     for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
@@ -160,13 +160,18 @@ export class ChordEngine {
     const now = this.context.currentTime;
     source.buffer = buffer;
     filter.type = bright ? 'highpass' : 'bandpass';
-    filter.frequency.value = bright ? 6200 : 1500;
+    filter.frequency.value = bright ? (open ? 5000 : 6800) : 1550;
     gain.gain.setValueAtTime(volume, now);
     gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
     source.connect(filter);
     filter.connect(gain);
     gain.connect(this.output);
     source.start(now);
+  }
+
+  private snare(volume: number, saturation: number) {
+    this.noise(volume * (0.78 + saturation * 0.35), false);
+    this.tone(175 + saturation * 45, volume * 0.42, 0.13, 'triangle', 520, 0.004, 0.08);
   }
 
   pulse() {
@@ -201,14 +206,28 @@ export class ChordEngine {
       });
     }
 
-    drums.forEach((placement, index) => {
-      const patternShift = Math.floor(placement.tone.hue / 45 + index) % 8;
-      const localBeat = (beat + patternShift) % 8;
+    drums.forEach((placement) => {
+      const variation = Math.floor(placement.tone.hue / 120) % 3;
       const volume = placement.level * this.controls.drums;
-      if (localBeat === 0 || (localBeat === 4 && this.controls.complexity > 0.4)) this.kick(0.13 * volume);
-      if (localBeat === 4 && placement.tone.saturation > 0.28) this.noise(0.045 * volume, false);
-      if (localBeat % 2 === 1 && (placement.tone.texture > 0.22 || this.controls.complexity > 0.62)) {
-        this.noise(0.028 * volume, true);
+      const brightness = placement.tone.brightness;
+
+      if (brightness < 0.34) {
+        const kickPatterns = [[0, 4], [0, 3, 4, 6], [0, 4, 7]];
+        const pattern = this.controls.complexity < 0.35 ? [0, 4] : kickPatterns[variation];
+        if (pattern.includes(beat)) this.kick(0.19 * volume);
+      } else if (brightness < 0.68) {
+        const snarePatterns = [[2, 6], [2, 6, 7], [2, 5, 6]];
+        const pattern = this.controls.complexity < 0.35 ? [2, 6] : snarePatterns[variation];
+        if (pattern.includes(beat)) this.snare(0.085 * volume, placement.tone.saturation);
+      } else {
+        const sparse = [1, 3, 5, 7];
+        const dense = variation === 0 ? [0, 1, 2, 3, 4, 5, 6, 7]
+          : variation === 1 ? [0, 1, 3, 4, 5, 7] : [1, 2, 3, 5, 6, 7];
+        const pattern = placement.tone.texture > 0.38 && this.controls.complexity > 0.45 ? dense : sparse;
+        if (pattern.includes(beat)) {
+          const open = placement.tone.texture > 0.62 && beat === 7;
+          this.noise((open ? 0.036 : 0.026) * volume, true, open);
+        }
       }
     });
     this.step++;
