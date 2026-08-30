@@ -220,7 +220,11 @@ h1 { margin: 0; font-size: clamp(28px, 5vw, 52px); line-height: 0.98; }
 .placementActions button:disabled { opacity: .3; cursor: default; }
 .placementActions span { margin-left: auto; font-size: 11px; opacity: .45; }
 .loopHint { margin-top: -12px; color: rgba(255,255,255,.5); line-height: 1.4; }
-.placementCanvas { touch-action: pan-y; cursor: copy; }
+.placementCanvas {
+  touch-action: none;
+  overscroll-behavior: contain;
+  cursor: copy;
+}
 .placementCanvas.liveCanvas { touch-action: none; cursor: crosshair; }
 
 .hint {
