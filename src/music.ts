@@ -1,4 +1,4 @@
-export type Instrument = 'keys' | 'bass' | 'drums';
+export type Instrument = 'keys' | 'guitar' | 'bass' | 'drums';
 
 export type ImageTone = {
   hue: number;
@@ -24,12 +24,19 @@ type MusicControls = {
   keys: number;
   keysTone: number;
   keysSustain: number;
+  keysDelay: number;
+  guitar: number;
+  guitarTone: number;
+  guitarStrum: number;
+  guitarDelay: number;
   bass: number;
   bassDepth: number;
   bassMovement: number;
+  bassDelay: number;
   drums: number;
   drumPunch: number;
   drumDensity: number;
+  drumDelay: number;
   fourOnFloor: boolean;
 };
 
@@ -54,9 +61,10 @@ export class ChordEngine {
   private variation = 0.5;
   private controls: MusicControls = {
     transpose: 0, complexity: 0.5, space: 0.55,
-    keys: 0.78, keysTone: 0.62, keysSustain: 0.55,
-    bass: 0.68, bassDepth: 0.7, bassMovement: 0.45,
-    drums: 0.6, drumPunch: 0.7, drumDensity: 0.5, fourOnFloor: false,
+    keys: 0.78, keysTone: 0.62, keysSustain: 0.55, keysDelay: 0.42,
+    guitar: 0.7, guitarTone: 0.58, guitarStrum: 0.5, guitarDelay: 0.38,
+    bass: 0.68, bassDepth: 0.7, bassMovement: 0.45, bassDelay: 0.12,
+    drums: 0.6, drumPunch: 0.7, drumDensity: 0.5, drumDelay: 0.08, fourOnFloor: false,
   };
 
   setVariation(seed: number) {
@@ -142,7 +150,7 @@ export class ChordEngine {
     };
   }
 
-  private kick(volume: number) {
+  private kick(volume: number, send = 0) {
     if (!this.context || !this.output) return;
     const now = this.context.currentTime;
     const osc = this.context.createOscillator();
@@ -154,11 +162,17 @@ export class ChordEngine {
     gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.27);
     osc.connect(gain);
     gain.connect(this.output);
+    if (this.delay && send > 0) {
+      const sendGain = this.context.createGain();
+      sendGain.gain.value = send;
+      gain.connect(sendGain);
+      sendGain.connect(this.delay);
+    }
     osc.start(now);
     osc.stop(now + 0.28);
   }
 
-  private noise(volume: number, bright: boolean, open = false) {
+  private noise(volume: number, bright: boolean, open = false, send = 0) {
     if (!this.context || !this.output) return;
     const duration = bright ? (open ? 0.24 : 0.055) : 0.16;
     const buffer = this.context.createBuffer(1, this.context.sampleRate * duration, this.context.sampleRate);
@@ -176,12 +190,18 @@ export class ChordEngine {
     source.connect(filter);
     filter.connect(gain);
     gain.connect(this.output);
+    if (this.delay && send > 0) {
+      const sendGain = this.context.createGain();
+      sendGain.gain.value = send;
+      gain.connect(sendGain);
+      sendGain.connect(this.delay);
+    }
     source.start(now);
   }
 
-  private snare(volume: number, saturation: number) {
-    this.noise(volume * (0.78 + saturation * 0.35), false);
-    this.tone(175 + saturation * 45, volume * 0.42, 0.13, 'triangle', 520, 0.004, 0.08);
+  private snare(volume: number, saturation: number, send: number) {
+    this.noise(volume * (0.78 + saturation * 0.35), false, false, send);
+    this.tone(175 + saturation * 45, volume * 0.42, 0.13, 'triangle', 520, 0.004, send);
   }
 
   pulse(): Instrument[] {
@@ -193,6 +213,7 @@ export class ChordEngine {
     const beat = this.step % 8;
 
     const keys = this.placements.filter((p) => p.instrument === 'keys');
+    const guitars = this.placements.filter((p) => p.instrument === 'guitar');
     const bass = this.placements.filter((p) => p.instrument === 'bass');
     const drums = this.placements.filter((p) => p.instrument === 'drums');
 
@@ -205,7 +226,7 @@ export class ChordEngine {
         this.tone(hz(key + root + interval + 24),
           (0.025 - index * 0.003) * this.controls.keys,
           2.1 + this.controls.keysSustain * 1.4 + this.controls.space * 0.7,
-          'sine', 850 + this.controls.keysTone * 750, 0.16, 0.55);
+          'sine', 850 + this.controls.keysTone * 750, 0.16, this.controls.keysDelay);
       });
     }
 
@@ -220,9 +241,27 @@ export class ChordEngine {
         this.tone(hz(note), volume, 0.28 + this.controls.keysSustain * 0.72 + this.controls.space * 0.18,
           this.controls.keysTone > 0.72 ? 'sawtooth' : 'triangle',
           700 + this.controls.keysTone * 2600 + placement.tone.brightness * 900,
-          0.012 + (1 - this.controls.keysTone) * 0.035, 0.4);
+          0.012 + (1 - this.controls.keysTone) * 0.035, this.controls.keysDelay);
       }
     });
+
+    const guitarInterval = this.controls.guitarStrum > 0.72 ? 1 : this.controls.guitarStrum > 0.3 ? 2 : 4;
+    if (beat % guitarInterval === 0) {
+      guitars.forEach((placement, index) => {
+        hits.add('guitar');
+        const degree = Math.min(4, Math.floor(placement.tone.hue / 72));
+        const baseNote = key + PENTATONIC[degree] + 24;
+        const intervals = this.controls.guitarStrum > 0.58 ? [0, 7, 12] : [0];
+        intervals.forEach((interval, chordIndex) => {
+          const volume = 0.065 * placement.level * this.controls.guitar /
+            Math.sqrt(Math.max(1, guitars.length * intervals.length));
+          this.tone(hz(baseNote + interval), volume, 0.24 + this.controls.guitarStrum * 0.38,
+            this.controls.guitarTone > 0.66 ? 'sawtooth' : 'triangle',
+            900 + this.controls.guitarTone * 2900 + placement.tone.brightness * 700,
+            0.006 + chordIndex * 0.012 + index * 0.004, this.controls.guitarDelay);
+        });
+      });
+    }
 
     const bassInterval = this.controls.bassMovement > 0.7 ? 1 : this.controls.bassMovement > 0.32 ? 2 : 4;
     if (beat % bassInterval === 0) {
@@ -233,7 +272,7 @@ export class ChordEngine {
         const melodicOffset = this.controls.bassMovement > 0.58 ? colorOffset % 5 : 0;
         const note = key + root + melodicOffset + bassRegister;
         this.tone(hz(note), 0.12 * placement.level * this.controls.bass / Math.sqrt(Math.max(1, bass.length)),
-          0.58, 'sine', 650 + placement.tone.texture * 350, 0.012, 0.08);
+          0.58, 'sine', 650 + placement.tone.texture * 350, 0.012, this.controls.bassDelay);
       });
     }
 
@@ -249,14 +288,15 @@ export class ChordEngine {
           : this.controls.complexity < 0.35 ? [0, 4] : kickPatterns[variation];
         if (pattern.includes(beat)) {
           hits.add('drums');
-          this.kick((0.11 + this.controls.drumPunch * 0.14) * volume);
+          this.kick((0.11 + this.controls.drumPunch * 0.14) * volume, this.controls.drumDelay);
         }
       } else if (brightness < 0.68) {
         const snarePatterns = [[2, 6], [2, 6, 7], [2, 5, 6]];
         const pattern = this.controls.complexity < 0.35 ? [2, 6] : snarePatterns[variation];
         if (pattern.includes(beat)) {
           hits.add('drums');
-          this.snare((0.05 + this.controls.drumPunch * 0.075) * volume, placement.tone.saturation);
+          this.snare((0.05 + this.controls.drumPunch * 0.075) * volume,
+            placement.tone.saturation, this.controls.drumDelay);
         }
       } else {
         const sparse = [1, 3, 5, 7];
@@ -266,7 +306,7 @@ export class ChordEngine {
         if (pattern.includes(beat)) {
           hits.add('drums');
           const open = placement.tone.texture > 0.62 && beat === 7;
-          this.noise((open ? 0.036 : 0.026) * volume, true, open);
+          this.noise((open ? 0.036 : 0.026) * volume, true, open, this.controls.drumDelay);
         }
       }
     });

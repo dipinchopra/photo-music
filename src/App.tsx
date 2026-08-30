@@ -5,6 +5,7 @@ import { ChordEngine, type Instrument, type Placement } from './music';
 const music = new ChordEngine();
 const INSTRUMENTS: Array<{ id: Instrument; label: string; color: string }> = [
   { id: 'keys', label: '🎹 Keyboard', color: '#8be9fd' },
+  { id: 'guitar', label: '🎸 Guitar', color: '#50fa7b' },
   { id: 'bass', label: '🎸 Bass', color: '#bd93f9' },
   { id: 'drums', label: '🥁 Percussion', color: '#ffb86c' },
 ];
@@ -26,7 +27,7 @@ export default function App() {
   const beatRef = useRef<number | null>(null);
   const tempoRef = useRef(96);
   const pulseRef = useRef(0);
-  const visualHitsRef = useRef<Record<Instrument, number>>({ keys: 0, bass: 0, drums: 0 });
+  const visualHitsRef = useRef<Record<Instrument, number>>({ keys: 0, guitar: 0, bass: 0, drums: 0 });
   const phaseRef = useRef(0);
   const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
   const dragRef = useRef<{
@@ -42,9 +43,10 @@ export default function App() {
   const [fourOnFloor, setFourOnFloor] = useState(false);
   const [controls, setControls] = useState({
     tempo: 96, pitch: 0, complexity: 52, space: 58,
-    keys: 78, keysTone: 62, keysSustain: 55,
-    bass: 68, bassDepth: 70, bassMovement: 45,
-    drums: 60, drumPunch: 70, drumDensity: 50,
+    keys: 78, keysTone: 62, keysSustain: 55, keysDelay: 42,
+    guitar: 70, guitarTone: 58, guitarStrum: 50, guitarDelay: 38,
+    bass: 68, bassDepth: 70, bassMovement: 45, bassDelay: 12,
+    drums: 60, drumPunch: 70, drumDensity: 50, drumDelay: 8,
   });
 
   const draw = () => {
@@ -98,6 +100,11 @@ export default function App() {
           ctx.globalAlpha = 0.12 * strength;
           ctx.drawImage(image, dx + offset, dy, dw, dh);
           ctx.drawImage(image, dx - offset, dy, dw, dh);
+        } else if (placement.instrument === 'guitar') {
+          const offset = (1.5 + controls.guitarStrum * 0.035) * strength * dpr;
+          ctx.globalCompositeOperation = 'screen';
+          ctx.globalAlpha = 0.14 * strength;
+          ctx.drawImage(image, dx + offset, dy - offset, dw, dh);
         } else if (placement.instrument === 'bass') {
           const scale = 1 + 0.035 * strength;
           ctx.globalAlpha = 0.48 * strength;
@@ -176,12 +183,19 @@ export default function App() {
       keys: controls.keys / 100,
       keysTone: controls.keysTone / 100,
       keysSustain: controls.keysSustain / 100,
+      keysDelay: controls.keysDelay / 100,
+      guitar: controls.guitar / 100,
+      guitarTone: controls.guitarTone / 100,
+      guitarStrum: controls.guitarStrum / 100,
+      guitarDelay: controls.guitarDelay / 100,
       bass: controls.bass / 100,
       bassDepth: controls.bassDepth / 100,
       bassMovement: controls.bassMovement / 100,
+      bassDelay: controls.bassDelay / 100,
       drums: controls.drums / 100,
       drumPunch: controls.drumPunch / 100,
       drumDensity: controls.drumDensity / 100,
+      drumDelay: controls.drumDelay / 100,
       fourOnFloor,
     });
     if (placementsRef.current.length) { stopBeat(); startBeat(); }
@@ -192,6 +206,7 @@ export default function App() {
     const animate = () => {
       pulseRef.current *= 0.9;
       visualHitsRef.current.keys *= 0.88;
+      visualHitsRef.current.guitar *= 0.82;
       visualHitsRef.current.bass *= 0.9;
       visualHitsRef.current.drums *= 0.76;
       draw();
@@ -338,17 +353,22 @@ export default function App() {
         <small className="loopHint">Tap a placed circle to remove it from the loop.</small>
         <div className="instrumentModule keysModule"><strong>🎹 Keyboard</strong>
           {([['keys', 'Volume', 'Sets the level of every keyboard circle.'], ['keysTone', 'Tone', 'Moves from soft keys to a brighter synth.'],
-            ['keysSustain', 'Sustain', 'Controls how long keyboard notes ring.']] as const).map(([key, label, help]) =>
+            ['keysSustain', 'Sustain', 'Controls how long keyboard notes ring.'], ['keysDelay', 'Delay', 'Sends keyboard notes into the echo.']] as const).map(([key, label, help]) =>
+            <label key={key}><span>{label} <output>{controls[key]}%</output></span><small>{help}</small>
+              <Slider value={controls[key]} onChange={(value) => setControl(key, value)} /></label>)}</div>
+        <div className="instrumentModule guitarModule"><strong>🎸 Guitar</strong>
+          {([['guitar', 'Volume', 'Sets the level of every guitar circle.'], ['guitarTone', 'Tone', 'Moves from mellow plucks to brighter strings.'],
+            ['guitarStrum', 'Strum', 'Controls chord size, rhythm and note length.'], ['guitarDelay', 'Delay', 'Sends guitar plucks into the echo.']] as const).map(([key, label, help]) =>
             <label key={key}><span>{label} <output>{controls[key]}%</output></span><small>{help}</small>
               <Slider value={controls[key]} onChange={(value) => setControl(key, value)} /></label>)}</div>
         <div className="instrumentModule bassModule"><strong>🎸 Bass</strong>
           {([['bass', 'Volume', 'Sets the level of every bass circle.'], ['bassDepth', 'Depth', 'Pushes bass notes into a lower register.'],
-            ['bassMovement', 'Movement', 'Adds faster notes and melodic variation.']] as const).map(([key, label, help]) =>
+            ['bassMovement', 'Movement', 'Adds faster notes and melodic variation.'], ['bassDelay', 'Delay', 'Sends bass notes into the echo.']] as const).map(([key, label, help]) =>
             <label key={key}><span>{label} <output>{controls[key]}%</output></span><small>{help}</small>
               <Slider value={controls[key]} onChange={(value) => setControl(key, value)} /></label>)}</div>
         <div className="instrumentModule drumsModule"><strong>🥁 Percussion</strong>
           {([['drums', 'Volume', 'Sets the overall drum level.'], ['drumPunch', 'Punch', 'Strengthens kick impact and snare body.'],
-            ['drumDensity', 'Density', 'Adds more subdivisions to bright percussion circles.']] as const).map(([key, label, help]) =>
+            ['drumDensity', 'Density', 'Adds more subdivisions to bright percussion circles.'], ['drumDelay', 'Delay', 'Sends drum hits into the echo.']] as const).map(([key, label, help]) =>
             <label key={key}><span>{label} <output>{controls[key]}%</output></span><small>{help}</small>
               <Slider value={controls[key]} onChange={(value) => setControl(key, value)} /></label>)}
           <button className={`floorToggle ${fourOnFloor ? 'selected' : ''}`}

@@ -182,6 +182,7 @@ h1 { margin: 0; font-size: clamp(28px, 5vw, 52px); line-height: 0.98; }
 .floorToggle small { color: rgba(255,255,255,.48); }
 .floorToggle.selected { background: rgba(255,184,108,.2); border-color: #ffb86c; }
 .keysModule { border-top-color: #8be9fd; }
+.guitarModule { border-top-color: #50fa7b; }
 .bassModule { border-top-color: #bd93f9; }
 .drumsModule { border-top-color: #ffb86c; }
 
@@ -280,7 +281,7 @@ footer {
     gap: 20px;
   }
   .composerControls { max-height: none; overflow: visible; }
-  .instrumentPicker { grid-template-columns: repeat(3, 1fr); }
+  .instrumentPicker { grid-template-columns: repeat(2, 1fr); }
   .instrumentPicker button { text-align: center; font-size: 11px; padding-inline: 5px; }
   footer { display: none; }
 }
