@@ -14,7 +14,6 @@ export type Placement = {
   radius: number;
   level: number;
   instrument: Instrument;
-  active: boolean;
   tone: ImageTone;
 };
 
@@ -96,7 +95,7 @@ export class ChordEngine {
   async playPlacements(placements: Placement[]) {
     await this.unlock();
     const wasEmpty = this.placements.length === 0;
-    this.placements = placements.filter((placement) => placement.active);
+    this.placements = placements;
     if (wasEmpty && this.placements.length) this.pulse();
   }
 

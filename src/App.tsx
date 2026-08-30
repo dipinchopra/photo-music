@@ -57,7 +57,7 @@ export default function App() {
       ctx.fillStyle = 'rgba(0,0,0,.38)';
       ctx.beginPath();
       ctx.rect(0, 0, width, height);
-      placementsRef.current.filter((placement) => placement.active).forEach((placement) => {
+      placementsRef.current.forEach((placement) => {
         ctx.moveTo((placement.x + placement.radius) * dpr, placement.y * dpr);
         ctx.arc(placement.x * dpr, placement.y * dpr, placement.radius * dpr, 0, Math.PI * 2);
       });
@@ -65,7 +65,7 @@ export default function App() {
       ctx.restore();
     }
 
-    placementsRef.current.filter((placement) => placement.active).forEach((placement) => {
+    placementsRef.current.forEach((placement) => {
       const config = INSTRUMENTS.find((item) => item.id === placement.instrument)!;
       const x = placement.x * dpr;
       const y = placement.y * dpr;
@@ -169,7 +169,6 @@ export default function App() {
       id: nextIdRef.current++, x, y, radius,
       level: 0.25 + ((radius - 28) / 62) * 0.75,
       instrument: selected,
-      active: true,
       tone,
     };
     const next = [...placementsRef.current, placement].slice(-12);
@@ -229,13 +228,7 @@ export default function App() {
           <button disabled={!placements.length} onClick={() => updatePlacements([])}>Clear</button>
           <span>{placements.length}/12 placed</span>
         </div>
-        <div className="placementActions loopActions">
-          <button disabled={!placements.some((item) => item.active)}
-            onClick={() => updatePlacements(placementsRef.current.map((item) => ({ ...item, active: false })))}>Mute all</button>
-          <button disabled={!placements.some((item) => !item.active)}
-            onClick={() => updatePlacements(placementsRef.current.map((item) => ({ ...item, active: true })))}>Bring back</button>
-        </div>
-        <small className="loopHint">Tap a circle to remove it from the loop. Use Bring back to restore removed parts.</small>
+        <small className="loopHint">Tap a placed circle to remove it from the loop.</small>
         {([
           ['keys', 'Keyboard', 'Melodic voices taken from the sampled colors.'],
           ['bass', 'Bass', 'Low notes following the underlying chord progression.'],
@@ -258,7 +251,7 @@ export default function App() {
           onPointerDown={(e) => {
             void music.unlock();
             const point = canvasPoint(e.clientX, e.clientY);
-            const hit = [...placementsRef.current].reverse().find((placement) => placement.active &&
+            const hit = [...placementsRef.current].reverse().find((placement) =>
               Math.hypot(point.x - placement.x, point.y - placement.y) <= placement.radius);
             if (hit) {
               e.currentTarget.setPointerCapture(e.pointerId);
@@ -285,9 +278,7 @@ export default function App() {
             if (drag) {
               dragRef.current = null;
               if (!drag.moved) {
-                updatePlacements(placementsRef.current.map((placement) => placement.id === drag.id
-                  ? { ...placement, active: !placement.active }
-                  : placement));
+                updatePlacements(placementsRef.current.filter((placement) => placement.id !== drag.id));
                 return;
               }
               const next = placementsRef.current.map((placement) => {
