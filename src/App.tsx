@@ -10,6 +10,7 @@ export default function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const pointRef = useRef<Point | null>(null);
+  const activePointsRef = useRef(new Map<number, Point>());
   const playingRef = useRef(false);
   const lastChordRef = useRef('');
   const beatRef = useRef<number | null>(null);
@@ -58,10 +59,8 @@ export default function App() {
 
     ctx.drawImage(image, dx, dy, dw, dh);
 
-    const p = pointRef.current;
-    if (isActive && p) {
-      const px = p.x * dpr;
-      const py = p.y * dpr;
+    const points = [...activePointsRef.current.values()];
+    if (isActive && points.length) {
       const radius = Math.max(76, Math.min(rect.width, rect.height) * 0.13) * dpr;
       const visual = visualRef.current;
 
@@ -82,29 +81,33 @@ export default function App() {
       ctx.fillStyle = 'rgba(0,0,0,0.5)';
       ctx.beginPath();
       ctx.rect(0, 0, width, height);
-      ctx.arc(px, py, radius, 0, Math.PI * 2);
+      points.forEach((point) => {
+        ctx.moveTo(point.x * dpr + radius, point.y * dpr);
+        ctx.arc(point.x * dpr, point.y * dpr, radius, 0, Math.PI * 2);
+      });
       ctx.fill('evenodd');
       ctx.restore();
 
-      ctx.save();
-      ctx.strokeStyle = 'rgba(255,255,255,0.72)';
-      ctx.lineWidth = Math.max(1, 1.5 * dpr);
-      ctx.shadowColor = 'rgba(0,0,0,0.45)';
-      ctx.shadowBlur = 8 * dpr;
-      ctx.beginPath();
-      ctx.arc(px, py, radius, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.restore();
-
-      ctx.save();
-      ctx.globalCompositeOperation = 'screen';
-      ctx.globalAlpha = visual.pulse * 0.55;
-      ctx.strokeStyle = `hsl(${visual.hue} 95% 70%)`;
-      ctx.lineWidth = Math.max(1, 2 * dpr);
-      ctx.beginPath();
-      ctx.arc(px, py, radius * (1 + visual.pulse * 0.45), 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.restore();
+      points.forEach((point, index) => {
+        const px = point.x * dpr;
+        const py = point.y * dpr;
+        ctx.save();
+        ctx.strokeStyle = 'rgba(255,255,255,0.72)';
+        ctx.lineWidth = Math.max(1, 1.5 * dpr);
+        ctx.shadowColor = 'rgba(0,0,0,0.45)';
+        ctx.shadowBlur = 8 * dpr;
+        ctx.beginPath();
+        ctx.arc(px, py, radius, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.globalCompositeOperation = 'screen';
+        ctx.globalAlpha = visual.pulse * (0.55 - index * 0.07);
+        ctx.strokeStyle = `hsl(${(visual.hue + index * 34) % 360} 95% 70%)`;
+        ctx.lineWidth = Math.max(1, 2 * dpr);
+        ctx.beginPath();
+        ctx.arc(px, py, radius * (1 + visual.pulse * 0.45), 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      });
     }
   };
 
@@ -166,13 +169,14 @@ export default function App() {
     setControls((current) => ({ ...current, [name]: value }));
   };
 
-  const activateAt = async (clientX: number, clientY: number) => {
+  const activateAt = async (pointerId: number, clientX: number, clientY: number) => {
     const canvas = canvasRef.current;
     if (!canvas || !hasImage) return;
     const rect = canvas.getBoundingClientRect();
     const x = Math.max(0, Math.min(rect.width, clientX - rect.left));
     const y = Math.max(0, Math.min(rect.height, clientY - rect.top));
     pointRef.current = { x, y };
+    activePointsRef.current.set(pointerId, { x, y });
     setIsActive(true);
     playingRef.current = true;
     startBeat();
@@ -201,10 +205,18 @@ export default function App() {
     octx.drawImage(image, dx, dy, dw, dh);
 
     const dpr = off.width / rect.width;
-    const sample = sampleAverageColor(octx, x * dpr, y * dpr, 18 * dpr);
-    visualRef.current.hue = sample.h;
-    visualRef.current.texture = sample.texture;
-    const nextChord = colorToChord(sample.h, sample.s, sample.l, sample.texture);
+    const samples = [...activePointsRef.current.values()].map((point) =>
+      sampleAverageColor(octx, point.x * dpr, point.y * dpr, 18 * dpr));
+    const count = Math.max(1, samples.length);
+    const hueX = samples.reduce((sum, sample) => sum + Math.cos(sample.h * Math.PI / 180), 0);
+    const hueY = samples.reduce((sum, sample) => sum + Math.sin(sample.h * Math.PI / 180), 0);
+    const hue = (Math.atan2(hueY, hueX) * 180 / Math.PI + 360) % 360;
+    const saturation = samples.reduce((sum, sample) => sum + sample.s, 0) / count;
+    const lightness = samples.reduce((sum, sample) => sum + sample.l, 0) / count;
+    const texture = samples.reduce((sum, sample) => sum + sample.texture, 0) / count;
+    visualRef.current.hue = hue;
+    visualRef.current.texture = texture;
+    const nextChord = colorToChord(hue, saturation, lightness, texture);
 
     if (nextChord.id !== lastChordRef.current) {
       await music.play(nextChord);
@@ -229,6 +241,17 @@ export default function App() {
     music.stop(0.04);
     visualRef.current.pulse = 0;
     pointRef.current = null;
+    activePointsRef.current.clear();
+    requestAnimationFrame(draw);
+  };
+
+  const releasePointer = (pointerId: number) => {
+    activePointsRef.current.delete(pointerId);
+    if (!activePointsRef.current.size) {
+      deactivate();
+      return;
+    }
+    pointRef.current = [...activePointsRef.current.values()].at(-1) ?? null;
     requestAnimationFrame(draw);
   };
 
@@ -286,22 +309,22 @@ export default function App() {
             // iOS requires AudioContext creation/resume directly in a user gesture.
             void music.unlock();
             e.currentTarget.setPointerCapture(e.pointerId);
-            activateAt(e.clientX, e.clientY);
+            activateAt(e.pointerId, e.clientX, e.clientY);
           }}
           onPointerMove={(e) => {
             if (e.pointerType === 'mouse' || e.buttons > 0 || playingRef.current) {
-              activateAt(e.clientX, e.clientY);
+              activateAt(e.pointerId, e.clientX, e.clientY);
             }
           }}
-          onPointerUp={deactivate}
-          onPointerCancel={deactivate}
+          onPointerUp={(e) => releasePointer(e.pointerId)}
+          onPointerCancel={(e) => releasePointer(e.pointerId)}
           onPointerLeave={(e) => {
-            if (e.pointerType === 'mouse') deactivate();
+            if (e.pointerType === 'mouse') releasePointer(e.pointerId);
           }}
         />
 
         {hasImage && !isActive && (
-          <div className="hint">Move your cursor — or touch and drag</div>
+          <div className="hint">Hold two points, then move a third to shape the music</div>
         )}
 
         {isActive && chord && <div className="chordPill">{chord}</div>}
