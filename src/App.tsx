@@ -54,8 +54,6 @@ export default function App() {
   const openSheet = (value: Instrument | 'mix') => {
     if (value !== 'mix') {
       setSelected(value);
-      activeCircleRef.current = null;
-      setActiveCircleId(null);
     }
     setSheet(current => current === value ? null : value);
   };
@@ -74,8 +72,6 @@ export default function App() {
   const [selected, setSelected] = useState<Instrument>('keys');
   const [mode, setMode] = useState<'place' | 'live'>('place');
   const [radius, setRadius] = useState(50);
-  const [activeCircleId, setActiveCircleId] = useState<number | null>(null);
-  const activeCircleRef = useRef<number | null>(null);
   const [fourOnFloor, setFourOnFloor] = useState(false);
   const [arps, setArps] = useState({ keys: 'off' as ArpMode, guitar: 'off' as ArpMode, keysRate: 2, guitarRate: 2 });
   const [controls, setControls] = useState({
@@ -238,15 +234,7 @@ export default function App() {
       // Copy only the photo rectangle, including all rendered lenses and glints.
       recordingContext.drawImage(canvas, dx, dy, dw, dh, 0, 0, cropped.width, cropped.height);
     }
-    const active = drawnPlacements.find(placement => placement.id === activeCircleRef.current);
-    if (active) {
-      ctx.save();
-      ctx.setLineDash([2 * dpr, 5 * dpr]);
-      ctx.strokeStyle = 'rgba(255,255,255,.45)';
-      ctx.lineWidth = dpr;
-      ctx.beginPath(); ctx.arc(active.x * dpr, active.y * dpr, (active.radius + 5) * dpr, 0, Math.PI * 2); ctx.stroke();
-      ctx.restore();
-    }
+
   };
 
   const startBeat = () => {
@@ -366,27 +354,10 @@ export default function App() {
     } satisfies Placement;
   };
 
-  const selectCircle = (placement: Placement | null) => {
-    activeCircleRef.current = placement?.id ?? null;
-    setActiveCircleId(placement?.id ?? null);
-    if (placement) { setRadius(placement.radius); setSelected(placement.instrument); }
-  };
-
-  const resizeCircle = (value: number) => {
-    setRadius(value);
-    if (activeCircleRef.current === null) return;
-    const next = placementsRef.current.map(placement => placement.id === activeCircleRef.current ? {
-      ...placement, radius: value, level: 0.25 + (value - 28) / 62 * 0.75,
-      tone: sampleToneAt(placement.x, placement.y, value) ?? placement.tone,
-    } : placement);
-    updatePlacements(next);
-  };
-
   const placeAt = async (clientX: number, clientY: number) => {
     const placement = makePlacementAt(clientX, clientY, nextIdRef.current++);
     if (!placement) return;
     const next = [...placementsRef.current, placement];
-    selectCircle(placement);
     placementsRef.current = next;
     setPlacements(next);
     await music.playPlacements(next);
@@ -458,7 +429,6 @@ export default function App() {
   }, []);
 
   const updatePlacements = (next: Placement[]) => {
-    if (!next.some(placement => placement.id === activeCircleRef.current)) selectCircle(null);
     placementsRef.current = next;
     setPlacements(next);
     void music.playPlacements(next);
@@ -538,7 +508,6 @@ export default function App() {
             const hit = [...scenePlacements()].reverse().find((placement) =>
               Math.hypot(point.x - placement.x, point.y - placement.y) <= placement.radius);
             if (hit) {
-              selectCircle(hit);
               placementsRef.current = placementsRef.current.map(placement => placement.id === hit.id ? hit : placement);
               e.currentTarget.setPointerCapture(e.pointerId);
               dragRef.current = {
@@ -568,7 +537,10 @@ export default function App() {
             const drag = dragRef.current;
             if (drag) {
               dragRef.current = null;
-              if (!drag.moved) return;
+              if (!drag.moved) {
+                updatePlacements(placementsRef.current.filter(placement => placement.id !== drag.id));
+                return;
+              }
               const next = placementsRef.current.map((placement) => {
                 if (placement.id !== drag.id) return placement;
                 const tone = sampleToneAt(placement.x, placement.y, placement.radius);
@@ -677,8 +649,7 @@ export default function App() {
           <label><span>Space <output>{controls.space}%</output></span><small>Adds echo and atmospheric depth.</small>
             <Slider value={controls.space} onChange={(value) => setControl('space', value)} /></label></div>}
 
-        {sheet === 'mix' && <label className="sizeControl"><span>{activeCircleId === null ? 'Circle size' : 'Selected circle size'} <output>{Math.round(radius)}px</output></span><Slider min={28} max={90} value={radius} onChange={resizeCircle} /><small>Larger circles sample more color and play louder.</small></label>}
-        {sheet === 'mix' && activeCircleId !== null && <button className="removeCircle" onClick={() => updatePlacements(placementsRef.current.filter(placement => placement.id !== activeCircleRef.current))}>Remove selected circle</button>}
+        {sheet === 'mix' && <label className="sizeControl"><span>Circle size <output>{Math.round(radius)}px</output></span><Slider min={28} max={90} value={radius} onChange={setRadius} /><small>Larger circles sample more color and play louder.</small></label>}
         {sheet === 'mix' && motion !== 'off' && <label className="sizeControl"><span>Motion amount <output>{motionAmount}%</output></span><Slider value={motionAmount} onChange={value => { setMotionAmount(value); motionAmountRef.current = value / 100; }} /></label>}
       </div>
     </section>

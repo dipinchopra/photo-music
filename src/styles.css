@@ -480,4 +480,3 @@ html, body, #root, .app, .app * {
 .arpControls label { min-width: 0; }
 .arpControls select { width: 100%; padding: 8px; border: 1px solid #ffffff20; border-radius: 8px; background: #202020; color: #eee; font: inherit; font-size: 11px; }
 .arpControls select:disabled { opacity: .4; }
-.removeCircle { align-self: start; padding: 8px 0; border: 0; background: transparent; color: #aaa; font-size: 11px; }
