@@ -480,3 +480,21 @@ html, body, #root, .app, .app * {
 .arpControls label { min-width: 0; }
 .arpControls select { width: 100%; padding: 8px; border: 1px solid #ffffff20; border-radius: 8px; background: #202020; color: #eee; font: inherit; font-size: 11px; }
 .arpControls select:disabled { opacity: .4; }
+
+/* One compact scrolling dock leaves the photo the remaining screen height. */
+.app { gap: 10px; padding-top: 16px; padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+.instrumentDock { display: flex; gap: 6px; padding: 6px; overflow-x: auto; overflow-y: hidden; touch-action: pan-x; overscroll-behavior-x: contain; scrollbar-width: thin; scrollbar-color: #ffffff25 transparent; border-radius: 18px; }
+.instrumentDock button { flex: 1 0 100px; flex-direction: row; gap: 8px; padding: 10px 12px; white-space: nowrap; min-height: 44px; }
+.instrumentDock .instrumentGlyph { font-size: 22px; }
+.instrumentDock .mixButton small { position: static; font-size: 9px; color: #999; }
+.motionButton.active { --instrument-color: #f5f5f5; }
+.controlSheet .motionControls { display: flex; flex-direction: column; align-items: stretch; gap: 16px; padding-bottom: 4px; }
+.controlSheet .motionControls .modePicker { align-self: flex-start; }
+.controlSheet .motionControls small { flex-basis: auto; line-height: 1.5; }
+.controlSheet .motionControls .sizeControl { display: flex; flex-direction: column; gap: 8px; }
+@media (max-width: 700px) {
+  .app { padding: max(10px, env(safe-area-inset-top)) 10px max(8px, env(safe-area-inset-bottom)); gap: 8px; }
+  .instrumentDock { gap: 4px; padding: 5px; }
+  .instrumentDock button { flex-basis: 86px; padding: 9px 10px; font-size: 11px; gap: 7px; }
+  .instrumentDock .instrumentGlyph { font-size: 20px; }
+}

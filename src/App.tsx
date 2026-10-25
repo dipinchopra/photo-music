@@ -50,9 +50,9 @@ export default function App() {
   const nextIdRef = useRef(1);
 
   const sheetDragStart = useRef<number | null>(null);
-  const [sheet, setSheet] = useState<Instrument | 'mix' | null>(null);
-  const openSheet = (value: Instrument | 'mix') => {
-    if (value !== 'mix') {
+  const [sheet, setSheet] = useState<Instrument | 'mix' | 'motion' | null>(null);
+  const openSheet = (value: Instrument | 'mix' | 'motion') => {
+    if (value !== 'mix' && value !== 'motion') {
       setSelected(value);
     }
     setSheet(current => current === value ? null : value);
@@ -574,20 +574,8 @@ export default function App() {
         <button disabled={!placements.length} onClick={() => updatePlacements([])}>Clear</button>
       </div>
     </section>
-    <section className="motionControls" aria-label="Circle motion">
-      <span>Motion</span>
-      <div className="modePicker">
-        {(['off', 'breathe', 'sway'] as const).map(value => <button key={value} disabled={!hasImage}
-          aria-pressed={motion === value} className={motion === value ? 'selected' : ''}
-          onClick={() => {
-            motionRef.current = value; setMotion(value); motionSecondsRef.current = 0;
-            music.updatePlacements([...placementsRef.current, ...livePlacementsRef.current.values()]);
-          }}>{value === 'off' ? 'Off' : value === 'breathe' ? 'Breathe' : 'Sway'}</button>)}
-      </div>
-      <small>{motion === 'sway' ? 'Drift across colors · sound follows' : motion === 'breathe' ? 'Gently expand and settle' : 'Keep circles still'}</small>
-    </section>
     <div className={`dockRegion ${sheet ? 'sheetExpanded' : ''}`}>
-    <nav className="instrumentDock" aria-label="Instruments and mix">
+    <nav className="instrumentDock" aria-label="Instruments, motion and mix">
       {INSTRUMENTS.map((instrument, index) => <button key={instrument.id}
         style={{ '--instrument-color': instrument.color } as React.CSSProperties}
         className={selected === instrument.id ? 'active' : ''}
@@ -596,6 +584,10 @@ export default function App() {
         <span className="instrumentGlyph" aria-hidden="true">{['▥', '≋', '⌁', '⠿'][index]}</span>
         <span>{['Keys', 'Guitar', 'Bass', 'Drums'][index]}</span><i />
       </button>)}
+      <button className={`motionButton ${sheet === 'motion' ? 'active' : ''}`} aria-label={`Motion controls, ${motion}`}
+        aria-controls="instrumentSheet" aria-expanded={sheet === 'motion'} onClick={() => openSheet('motion')}>
+        <span className="instrumentGlyph" aria-hidden="true">∿</span><span>Motion</span>{motion !== 'off' && <i />}
+      </button>
       <button className={`mixButton ${sheet === 'mix' ? 'active' : ''}`} aria-controls="instrumentSheet" aria-expanded={sheet === 'mix'} onClick={() => openSheet('mix')}><span className="instrumentGlyph" aria-hidden="true">☷</span><span>Mix</span><small>{controls.tempo}</small></button>
     </nav>
     <section id="instrumentSheet" className={`controlSheet ${sheet ? 'isOpen' : ''}`} inert={!sheet} aria-hidden={!sheet}
@@ -605,7 +597,20 @@ export default function App() {
           onPointerDown={event => { sheetDragStart.current = event.clientY; event.currentTarget.setPointerCapture(event.pointerId); }}
           onPointerUp={event => { if (sheetDragStart.current !== null && event.clientY - sheetDragStart.current > 30) setSheet(null); sheetDragStart.current = null; }}
           onPointerCancel={() => { sheetDragStart.current = null; }}><span /></button>
-        <header className="sheetHeader"><div><h2 id="sheetTitle">{sheet === 'mix' ? 'The mix' : INSTRUMENTS.find(i => i.id === sheet)?.label}</h2></div><button onClick={() => setSheet(null)} aria-label="Close controls">✕</button></header>
+        <header className="sheetHeader"><div><h2 id="sheetTitle">{sheet === 'mix' ? 'The mix' : sheet === 'motion' ? 'Motion' : INSTRUMENTS.find(i => i.id === sheet)?.label}</h2></div><button onClick={() => setSheet(null)} aria-label="Close controls">✕</button></header>
+        {sheet === 'motion' && <div className="motionControls">
+      <div className="modePicker">
+        {(['off', 'breathe', 'sway'] as const).map(value => <button key={value} disabled={!hasImage}
+          aria-pressed={motion === value} className={motion === value ? 'selected' : ''}
+          onClick={() => {
+            motionRef.current = value; setMotion(value); motionSecondsRef.current = 0;
+            music.updatePlacements([...placementsRef.current, ...livePlacementsRef.current.values()]);
+          }}>{value === 'off' ? 'Off' : value === 'breathe' ? 'Breathe' : 'Sway'}</button>)}
+      </div>
+      <small>{motion === 'sway' ? 'Drift across colors · sound follows' : motion === 'breathe' ? 'Gently expand and settle' : 'Keep circles still'}</small>
+      <label className="sizeControl"><span>Amount <output>{motionAmount}%</output></span>
+        <Slider value={motionAmount} onChange={value => { setMotionAmount(value); motionAmountRef.current = value / 100; }} /></label>
+    </div>}
         {sheet === 'keys' && <div className="instrumentModule keysModule"><strong>🎹 Keyboard</strong>
           {([['keys', 'Volume', 'Sets the level of every keyboard circle.'], ['keysTone', 'Tone', 'Moves from soft keys to a brighter synth.'],
             ['keysSustain', 'Note length', 'Controls how long keyboard notes ring.']] as const).map(([key, label, help]) =>
@@ -650,7 +655,6 @@ export default function App() {
             <Slider value={controls.space} onChange={(value) => setControl('space', value)} /></label></div>}
 
         {sheet === 'mix' && <label className="sizeControl"><span>Circle size <output>{Math.round(radius)}px</output></span><Slider min={28} max={90} value={radius} onChange={setRadius} /><small>Larger circles sample more color and play louder.</small></label>}
-        {sheet === 'mix' && motion !== 'off' && <label className="sizeControl"><span>Motion amount <output>{motionAmount}%</output></span><Slider value={motionAmount} onChange={value => { setMotionAmount(value); motionAmountRef.current = value / 100; }} /></label>}
       </div>
     </section>
     </div>
