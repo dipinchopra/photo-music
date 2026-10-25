@@ -296,7 +296,12 @@ test('sample pads preload once, use buffer sources, and route through the record
     assert.equal(context.oscillators.length, oscillators, 'pads trigger rendered samples rather than synth notes');
     assert.ok(context.filters.includes(shot.connections[0]));
     const output = shot.connections[0].connections[0].connections[0];
-    assert.ok(output.connections[0].connections.includes(context.recordingDestination), 'samples reach the recording mix');
+    const reaches = (node, target, seen = new Set()) => {
+      if (node === target) return true;
+      if (seen.has(node)) return false; seen.add(node);
+      return (node.connections ?? []).some(next => reaches(next, target, seen));
+    };
+    assert.ok(reaches(output, context.recordingDestination), 'samples reach the recording mix');
     const streams = await engine.recordingStream();
     assert.ok(streams);
     engine.stopSamples();
@@ -470,4 +475,49 @@ test('live harmony follows the audible chord rather than the scheduler lookahead
     sources=ctx.bufferSources.filter(s=>s.buffer?.original && s.startTime===ctx.currentTime);
     assert.ok(Math.abs(sources[0].playbackRate.value-Math.pow(2,5/12))<1e-9, 'G3 follows after the bar change');
   } finally {globalThis.fetch=originalFetch;}
+});
+
+
+test('placed and live mix levels are independent and update sustained voices without retriggering', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ok:true,arrayBuffer:async()=>new ArrayBuffer(48)});
+  try {
+    const engine = new ChordEngine();
+    await engine.prepareSamples('https://example.com/samples/');
+    await engine.playPlacements([placement]); await engine.playSample(0, placement);
+    const context = Context.instances.at(-1);
+    assert.equal(engine.placedMaster.gain.value, 1);
+    assert.equal(engine.sampleMaster.gain.value, .55);
+    const sourceCount = context.bufferSources.length, oscillatorCount = context.oscillators.length;
+    engine.configure({placedLevel:.3, sampleLevel:.7, keys:.9, sampleKeys:.2});
+    assert.equal(engine.placedMaster.gain.target.v,.3);
+    assert.equal(engine.sampleMaster.gain.target.v,.7);
+    assert.equal(engine.placedMix.get('keys').gain.target.v,.9);
+    assert.equal(engine.sampleMix.get('keys').gain.target.v,.2);
+    assert.equal(engine.sampleMaster.gain.target.constant,.025, 'mix changes ramp smoothly');
+    assert.equal(context.bufferSources.length,sourceCount);
+    assert.equal(context.oscillators.length,oscillatorCount);
+    const sample = context.bufferSources.find(source=>source.buffer?.original);
+    const sampleGroup = sample.connections[0].connections[0].connections[0];
+    assert.equal(sampleGroup,engine.sampleMix.get('keys'));
+    const tone = context.oscillators[0];
+    const placedGroup = tone.connections[0].connections[0].connections[0].connections[0];
+    assert.equal(placedGroup,engine.placedMix.get('keys'));
+    engine.configure({sampleLevel:0});
+    assert.equal(engine.placedMaster.gain.target.v,.3, 'muting live pads leaves placed loops unchanged');
+    engine.configure({placedLevel:0});
+    assert.equal(engine.sampleMaster.gain.target.v,0);
+  } finally {globalThis.fetch=originalFetch;}
+});
+
+test('separate mix levels survive Safari audio graph reconstruction', async () => {
+  const engine = new ChordEngine();
+  engine.configure({placedLevel:.65,sampleLevel:.4,sampleBass:.2,bass:.8});
+  await engine.unlock(); const old=Context.instances.at(-1);
+  old.close=async()=>{old.state='closed';};
+  await engine.rebuildPlayback([placement]);
+  assert.equal(engine.placedMaster.gain.value,.65);
+  assert.equal(engine.sampleMaster.gain.value,.4);
+  assert.equal(engine.sampleMix.get('bass').gain.value,.2);
+  assert.equal(engine.placedMix.get('bass').gain.value,.8);
 });

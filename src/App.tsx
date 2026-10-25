@@ -110,6 +110,7 @@ export default function App() {
   const [arps, setArps] = useState({ keys: 'off' as ArpMode, guitar: 'off' as ArpMode, keysRate: 2, guitarRate: 2 });
   const [controls, setControls] = useState({
     tempo: 96, pitch: 0, complexity: 52, space: 58,
+    placedLevel: 100, sampleLevel: 55, sampleKeys: 78, sampleGuitar: 70, sampleBass: 68, sampleDrums: 60,
     keys: 78, keysTone: 62, keysSustain: 55, keysDelay: 0,
     guitar: 70, guitarTone: 58, guitarStrum: 50, guitarDelay: 0,
     bass: 68, bassDepth: 70, bassMovement: 45, bassDelay: 0,
@@ -331,6 +332,9 @@ export default function App() {
 
   useEffect(() => {
     music.configure({
+      placedLevel: controls.placedLevel / 100, sampleLevel: controls.sampleLevel / 100,
+      sampleKeys: controls.sampleKeys / 100, sampleGuitar: controls.sampleGuitar / 100,
+      sampleBass: controls.sampleBass / 100, sampleDrums: controls.sampleDrums / 100,
       tempo: controls.tempo,
       transpose: controls.pitch,
       complexity: controls.complexity / 100,
@@ -866,6 +870,10 @@ export default function App() {
             <span>Four-on-the-floor</span><small>{fourOnFloor ? 'On · kick plays every beat' : 'Off · kick follows the image pattern'}</small>
           </button>
         </div>}
+        {sheet === 'mix' && <div className="liveMixControls">
+          <label><span>Placed instruments <output>{controls.placedLevel}%</output></span><Slider value={controls.placedLevel} onChange={value => setControl('placedLevel', value)} /></label>
+          <label><span>Live samples <output>{controls.sampleLevel}%</output></span><Slider value={controls.sampleLevel} onChange={value => setControl('sampleLevel', value)} /></label>
+        </div>}
         {sheet === 'mix' && mode === 'place' && <div className="instrumentModule globalModule"><strong>Composition</strong>
           <label><span>Tempo <output>{controls.tempo} BPM</output></span><small>Sets the speed of the loop.</small>
             <Slider min={55} max={160} value={controls.tempo} onChange={(value) => setControl('tempo', value)} /></label>
@@ -879,7 +887,7 @@ export default function App() {
         {sheet === 'mix' && mode === 'live' && <div className="liveMixControls">
           <label><span>Loop repeats</span><select value={repeatBeats} onChange={event => setRepeatBeats(Number(event.target.value))}><option value={1}>Every beat</option><option value={4}>Every bar · 4 beats</option></select><small>Melodic pads repeat at this rate. Drums follow the groove.</small></label>
           <label><span>Tempo <output>{controls.tempo} BPM</output></span><Slider min={55} max={160} value={controls.tempo} onChange={value => setControl('tempo', value)} /></label>
-          {([['keys', 'Chords'], ['guitar', 'Textures'], ['bass', 'Bass'], ['drums', 'Drums']] as const).map(([key, label]) => <label key={key}><span>{label} <output>{controls[key]}%</output></span><Slider value={controls[key]} onChange={value => setControl(key, value)} /></label>)}
+          {([['sampleKeys', 'Live chords'], ['sampleGuitar', 'Live textures'], ['sampleBass', 'Live bass'], ['sampleDrums', 'Live drums']] as const).map(([key, label]) => <label key={key}><span>{label} <output>{controls[key]}%</output></span><Slider value={controls[key]} onChange={value => setControl(key, value)} /></label>)}
           <label><span>Pitch <output>{controls.pitch > 0 ? '+' : ''}{controls.pitch} st</output></span><Slider min={-12} max={12} value={controls.pitch} onChange={value => setControl('pitch', value)} /></label>
         </div>}
         {sheet === 'mix' && mode === 'place' && <label className="sizeControl"><span>Circle size <output>{Math.round(radius)}px</output></span><Slider min={28} max={90} value={radius} onChange={setRadius} /><small>Tap again with the same instrument to remove. Choose another instrument to layer. Drag to move.</small></label>}

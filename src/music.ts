@@ -23,6 +23,12 @@ export type Placement = {
 };
 
 type MusicControls = {
+  placedLevel: number;
+  sampleLevel: number;
+  sampleKeys: number;
+  sampleGuitar: number;
+  sampleBass: number;
+  sampleDrums: number;
   tempo: number;
   transpose: number;
   complexity: number;
@@ -61,6 +67,10 @@ type TimbreBinding = { filter: BiquadFilterNode; colourGain: GainNode; cutoff: n
 export class ChordEngine {
   private context: AudioContext | null = null;
   private output: GainNode | null = null;
+  private placedMaster: GainNode | null = null;
+  private sampleMaster: GainNode | null = null;
+  private placedMix = new Map<Instrument, GainNode>();
+  private sampleMix = new Map<Instrument, GainNode>();
   private recorderOutput: MediaStreamAudioDestinationNode | null = null;
   private delay: DelayNode | null = null;
   private feedback: GainNode | null = null;
@@ -154,9 +164,8 @@ export class ChordEngine {
     source.playbackRate.value = rate;
     filter.type = 'lowpass';
     filter.frequency.value = 1800 + placement.tone.brightness * 11000;
-    const volume = this.controls[instrument];
-    gain.gain.value = volume * (0.58 + placement.tone.saturation * 0.18) * level;
-    source.connect(filter); filter.connect(gain); gain.connect(this.output);
+    gain.gain.value = (0.58 + placement.tone.saturation * 0.18) * level;
+    source.connect(filter); filter.connect(gain); gain.connect(this.sampleMix.get(instrument)!);
     const voice: (typeof this.sampleVoices)[number] = { source, gain, index, repeating };
     this.sampleVoices.push(voice);
     this.trackSource(source, gain, now, () => {
@@ -261,6 +270,7 @@ export class ChordEngine {
     return (30000 / tempo) * (1 + (this.step % 2 === 1 ? 1 : -1) * this.composition.swing);
   }
   private controls: MusicControls = {
+    placedLevel: 1, sampleLevel: .55, sampleKeys: .78, sampleGuitar: .7, sampleBass: .68, sampleDrums: .6,
     tempo: 96, transpose: 0, complexity: 0.5, space: 0.55,
     keys: 0.78, keysTone: 0.62, keysSustain: 0.55, keysDelay: 0, keysArp: 'off', keysArpRate: 2,
     guitar: 0.7, guitarTone: 0.58, guitarStrum: 0.5, guitarDelay: 0, guitarArp: 'off', guitarArpRate: 2,
@@ -281,7 +291,23 @@ export class ChordEngine {
   configure(next: Partial<MusicControls>) {
     const spaceChanged = next.space !== undefined && next.space !== this.controls.space;
     this.controls = { ...this.controls, ...next };
+    this.updateMix();
     if (spaceChanged) this.updateSpace();
+  }
+
+  private updateMix(initial = false) {
+    if (!this.context) return;
+    const apply = (gain: GainNode | null, value: number) => {
+      if (!gain) return;
+      if (initial) gain.gain.value = value;
+      else gain.gain.setTargetAtTime(value, this.context!.currentTime, .025);
+    };
+    apply(this.placedMaster, this.controls.placedLevel);
+    apply(this.sampleMaster, this.controls.sampleLevel);
+    const sampleLevels = { keys: this.controls.sampleKeys, guitar: this.controls.sampleGuitar,
+      bass: this.controls.sampleBass, drums: this.controls.sampleDrums };
+    this.placedMix.forEach((gain, instrument) => apply(gain, this.controls[instrument]));
+    this.sampleMix.forEach((gain, instrument) => apply(gain, sampleLevels[instrument]));
   }
 
   private updateSpace() {
@@ -301,6 +327,16 @@ export class ChordEngine {
       this.context = new AudioContextClass();
       this.context.onstatechange = () => this.onPlaybackState?.(this.running);
       this.output = this.context.createGain();
+      this.placedMaster = this.context.createGain();
+      this.sampleMaster = this.context.createGain();
+      this.placedMaster.connect(this.output); this.sampleMaster.connect(this.output);
+      this.placedMix.clear(); this.sampleMix.clear();
+      for (const instrument of ['keys', 'guitar', 'bass', 'drums'] as const) {
+        const placed = this.context.createGain(), sample = this.context.createGain();
+        placed.connect(this.placedMaster); sample.connect(this.sampleMaster);
+        this.placedMix.set(instrument, placed); this.sampleMix.set(instrument, sample);
+      }
+      this.updateMix(true);
       this.delay = this.context.createDelay(1);
       this.feedback = this.context.createGain();
       const compressor = this.context.createDynamicsCompressor();
@@ -310,7 +346,7 @@ export class ChordEngine {
       this.output.connect(compressor);
       this.delay.connect(this.feedback);
       this.feedback.connect(this.delay);
-      this.delay.connect(compressor);
+      this.delay.connect(this.placedMaster);
       compressor.connect(this.context.destination);
       this.recorderOutput = this.context.createMediaStreamDestination();
       compressor.connect(this.recorderOutput);
@@ -378,10 +414,10 @@ export class ChordEngine {
     osc.connect(filter);
     filter.connect(gain);
     gain.connect(colourGain);
-    colourGain.connect(this.output);
+    colourGain.connect(this.placedMix.get(this.soundingPlacement?.instrument ?? 'keys')!);
     if (this.delay && send > 0) {
       const sendGain = this.context.createGain();
-      sendGain.gain.value = send;
+      sendGain.gain.value = send * this.controls[this.soundingPlacement?.instrument ?? 'keys'];
       colourGain.connect(sendGain);
       sendGain.connect(this.delay);
     }
@@ -457,10 +493,10 @@ export class ChordEngine {
     gain.gain.setValueAtTime(volume, now);
     gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.27);
     osc.connect(gain);
-    gain.connect(this.output);
+    gain.connect(this.placedMix.get('drums')!);
     if (this.delay && send > 0) {
       const sendGain = this.context.createGain();
-      sendGain.gain.value = send;
+      sendGain.gain.value = send * this.controls.drums;
       gain.connect(sendGain);
       sendGain.connect(this.delay);
     }
@@ -486,10 +522,10 @@ export class ChordEngine {
     gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
     source.connect(filter);
     filter.connect(gain);
-    gain.connect(this.output);
+    gain.connect(this.placedMix.get('drums')!);
     if (this.delay && send > 0) {
       const sendGain = this.context.createGain();
-      sendGain.gain.value = send;
+      sendGain.gain.value = send * this.controls.drums;
       gain.connect(sendGain);
       sendGain.connect(this.delay);
     }
@@ -531,7 +567,7 @@ export class ChordEngine {
       hits.add('keys');
       [root, root + 2, root + 4].forEach((degree, index) => {
         this.tone(noteAt(degree >= 7 ? degree - 7 : degree, 24),
-          0.012 * this.controls.keys / (1 + index * 0.2),
+          0.012 / (1 + index * 0.2),
           3.5 + this.controls.keysSustain * 2.5,
           'sine', 650 + this.controls.keysTone * 900, 0.45, this.controls.keysDelay);
       });
@@ -563,7 +599,7 @@ export class ChordEngine {
       const secondsPerStep = 60 / this.controls.tempo / 2;
       const duration = arpeggiating ? secondsPerStep * this.controls.keysArpRate * (0.5 + this.controls.keysSustain * 0.35)
         : Math.max(0.35, melody.hold * secondsPerStep * (0.7 + this.controls.keysSustain * 0.4));
-      this.voice(hz(pitch), 0.085 * placement.level * this.controls.keys * melody.accent / Math.sqrt(Math.min(keys.length, 3)),
+      this.voice(hz(pitch), 0.085 * placement.level * melody.accent / Math.sqrt(Math.min(keys.length, 3)),
         duration, this.controls.keysTone * 0.55 + placement.tone.saturation * 0.45,
         0.02 + (1 - this.controls.keysTone) * 0.04, this.controls.keysDelay * 0.55);
     }
@@ -586,7 +622,7 @@ export class ChordEngine {
         ? [arpeggioDegree(root, this.step, this.controls.guitarArp, this.controls.guitarArpRate, Math.floor(placement.tone.hue / 90) + lane)]
         : placement.radius > 65 ? [base, base + 2, base + 4] : [base];
       degrees.forEach((degree, index) => {
-        const volume = 0.065 * placement.level * this.controls.guitar * event.accent / Math.sqrt(Math.min(guitars.length, 3) * degrees.length);
+        const volume = 0.065 * placement.level * event.accent / Math.sqrt(Math.min(guitars.length, 3) * degrees.length);
         const duration = arpeggiating ? 30 / this.controls.tempo * this.controls.guitarArpRate * 0.75
           : 0.28 + this.controls.guitarStrum * 0.4;
         this.voice(noteAt(degree, 24), volume, duration,
@@ -613,7 +649,7 @@ export class ChordEngine {
       const degree = beat === 7 && this.controls.bassMovement > 0.58 ? nextRoot - 1
         : root + (beat === 0 && lane === 0 ? 0 : colorDegree);
       const register = this.controls.bassDepth > 0.66 ? 0 : 12;
-      this.tone(noteAt(degree, register), 0.12 * placement.level * this.controls.bass * (beat % 4 === 0 ? 0.85 : 0.65),
+      this.tone(noteAt(degree, register), 0.12 * placement.level * (beat % 4 === 0 ? 0.85 : 0.65),
         composition.style === 'pulse' ? 0.2 : beat % 4 === 0 ? 0.62 : 0.38,
         composition.style === 'pulse' ? 'triangle' : 'sine', 350 + placement.tone.texture * 400 + composition.energy * 600, 0.012, this.controls.bassDelay);
     }
@@ -624,7 +660,7 @@ export class ChordEngine {
       const fill = bar % 4 === 3 && beat >= 6 && this.controls.complexity > 0.45;
       const detail = placement.tone.profile?.activity;
       const localAccent = detail?.length ? 0.65 + detail[beat % detail.length] * 0.35 : 1;
-      const volume = placement.level * this.controls.drums * localAccent / Math.sqrt(Math.max(1, drums.length));
+      const volume = placement.level * localAccent / Math.sqrt(Math.max(1, drums.length));
       const brightness = placement.tone.brightness;
 
       if (brightness < 0.34) {
