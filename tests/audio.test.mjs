@@ -248,3 +248,25 @@ test('Clear releases sounding voices over 0.9 seconds instead of cutting them of
   assert.ok(envelopes.length > 0);
   assert.ok(envelopes.every(node => node.gain.target.constant === 0.225));
 });
+
+test('a frozen running Safari context is replaced without waiting for close or resume', async () => {
+  const engine = new ChordEngine();
+  await engine.playPlacements([placement]);
+  const old = Context.instances.at(-1);
+  old.resume = () => new Promise(() => {});
+  old.close = () => new Promise(() => {});
+  const originalTime = engine.playbackTime;
+  await engine.rebuildPlayback([placement]);
+  const fresh = Context.instances.at(-1);
+  assert.notEqual(fresh, old);
+  assert.equal(old.onstatechange, null);
+  assert.equal(engine.running, true);
+  fresh.currentTime = originalTime + 1;
+  assert.ok(engine.playbackTime > originalTime);
+  const hits = Array.from({ length: 32 }, () => engine.pulse()).flat();
+  assert.ok(hits.includes('keys'), 'retained placements play through the rebuilt graph');
+});
+
+test('drums start with four-on-the-floor enabled', () => {
+  assert.equal(new ChordEngine().controls.fourOnFloor, true);
+});

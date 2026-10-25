@@ -77,7 +77,7 @@ export default function App() {
   const [selected, setSelected] = useState<Instrument>('keys');
   const [mode, setMode] = useState<'place' | 'live'>('place');
   const [radius, setRadius] = useState(50);
-  const [fourOnFloor, setFourOnFloor] = useState(false);
+  const [fourOnFloor, setFourOnFloor] = useState(true);
   const [arps, setArps] = useState({ keys: 'off' as ArpMode, guitar: 'off' as ArpMode, keysRate: 2, guitarRate: 2 });
   const [controls, setControls] = useState({
     tempo: 96, pitch: 0, complexity: 52, space: 58,
@@ -426,8 +426,31 @@ export default function App() {
     });
     recoveryRef.current = recovery;
     music.onPlaybackState = running => recovery.stateChanged(running);
-    const pause = () => recovery.pause();
+    let lastClock = music.playbackTime;
+    let stalledChecks = 0;
+    let rebuilt = false;
+    const pause = () => { stalledChecks = 0; rebuilt = false; recovery.pause(); };
     const resume = () => { void recovery.resume(); };
+    // Safari can leave currentTime frozen even when state is "running", or
+    // leave resume() pending forever. Watch the clock rather than that promise.
+    const watchdog = window.setInterval(() => {
+      const clock = music.playbackTime;
+      if (document.hidden || !placementsRef.current.length) {
+        stalledChecks = 0; rebuilt = false;
+      } else if (clock > lastClock) {
+        stalledChecks = 0; rebuilt = false;
+        setAudioPaused(!music.running);
+      } else if (++stalledChecks >= 3) {
+        setAudioPaused(true);
+        if (!rebuilt) {
+          rebuilt = true;
+          stopRecording();
+          void music.rebuildPlayback(placementsRef.current).then(() => recovery.resume()).catch(() => setAudioPaused(true));
+          startBeat();
+        }
+      }
+      lastClock = clock;
+    }, 500);
     const show = () => { if (document.hidden) pause(); else resume(); };
     // Blur alone is not a page pause. Visibility/pagehide owns stopping;
     // focus and pageshow repair both audio and the scheduler.
@@ -440,6 +463,7 @@ export default function App() {
     document.addEventListener('keydown', resume, true);
     return () => {
       recovery.dispose(); recoveryRef.current = null;
+      clearInterval(watchdog);
       music.onPlaybackState = null;
       window.removeEventListener('focus', resume);
       window.removeEventListener('pageshow', resume);

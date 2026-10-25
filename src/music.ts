@@ -102,6 +102,19 @@ export class ChordEngine {
   onPlaybackState: ((running: boolean) => void) | null = null;
 
   get running() { return this.context?.state === 'running'; }
+  get playbackTime() { return this.context?.currentTime ?? 0; }
+
+  async rebuildPlayback(placements: Placement[]) {
+    const previous = this.context;
+    this.stop();
+    if (previous) {
+      previous.onstatechange = null;
+      // Never wait for the broken context's close promise to unlock a new one.
+      try { void previous.close().catch(() => {}); } catch {}
+    }
+    this.context = null;
+    await this.playPlacements(placements);
+  }
   get needsScheduling() { return this.running && (this.nextStepTime === null || this.nextStepTime < this.context!.currentTime + 0.1); }
 
   stepDuration(tempo: number) {
@@ -112,7 +125,7 @@ export class ChordEngine {
     keys: 0.78, keysTone: 0.62, keysSustain: 0.55, keysDelay: 0, keysArp: 'off', keysArpRate: 2,
     guitar: 0.7, guitarTone: 0.58, guitarStrum: 0.5, guitarDelay: 0, guitarArp: 'off', guitarArpRate: 2,
     bass: 0.68, bassDepth: 0.7, bassMovement: 0.45, bassDelay: 0,
-    drums: 0.6, drumPunch: 0.7, drumDensity: 0.5, drumDelay: 0, fourOnFloor: false,
+    drums: 0.6, drumPunch: 0.7, drumDensity: 0.5, drumDelay: 0, fourOnFloor: true,
   };
 
   setComposition(composition: Composition) {
