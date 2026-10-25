@@ -40,7 +40,7 @@ test('every renderer clips to the photo and preserves the musical placement', ()
     drawVisual(context, image, bounds, immutable, mode.id, 3, 0.5, '#8be9fd', 2);
     assert.ok(calls.some(call => call[0] === 'rect' && call[3] === 400 && call[4] === 300));
     assert.ok(calls.some(call => call[0] === 'clip'));
-    assert.equal(calls.some(call => call[0] === 'drawImage'), mode.id !== 'shapes',
+    assert.equal(calls.some(call => call[0] === 'drawImage'), !['shapes', 'quilt'].includes(mode.id),
       'instrument borders do not repaint the photo');
     if (mode.id === 'shapes') {
       assert.equal(calls.some(call => call[0] === 'fill' || call[0] === 'fillRect'), false,
@@ -117,22 +117,30 @@ function tileSnapshot(mode, tone, hit = 0, x = 200, y = 150) {
 const tileTone = { hue: 25, saturation: 0.6, brightness: 0.4, texture: 0.5,
   profile: { contour: [0.2, 0.7, 0.3, 0.9], activity: [0.5] } };
 
-test('collage and quilt remain stable between notes, respond to hits, and derive style from the photo', () => {
+test('single tiles remain stable between notes and respond to note hits', () => {
   for (const mode of ['collage', 'quilt']) {
     const resting = tileSnapshot(mode, tileTone);
     assert.deepEqual(tileSnapshot(mode, tileTone), resting);
     assert.notDeepEqual(tileSnapshot(mode, tileTone, 1), resting, `${mode} responds to actual note hits`);
-    assert.notDeepEqual(tileSnapshot(mode, { ...tileTone, hue: 190 }), resting, `${mode} uses photo color`);
+    if (mode === 'collage') assert.notDeepEqual(tileSnapshot(mode, { ...tileTone, hue: 190 }), resting);
   }
 });
 
 test('photo tile source crops remain valid at photo edges for display and export caches', () => {
   for (const mode of ['collage', 'quilt']) for (const [x, y] of [[0, 0], [400, 300], [200, 150]]) {
     const crops = tileSnapshot(mode, tileTone, 1, x, y).filter(call => call[0] === 'drawImage');
-    assert.equal(crops.length, mode === 'collage' ? 12 : 25);
+    assert.equal(crops.length, mode === 'collage' ? 1 : 0);
     for (const [, , sx, sy, sw, sh] of crops) {
       assert.ok(sx >= 0 && sy >= 0 && sw > 0 && sh > 0);
       assert.ok(sx + sw <= 1200 + 1e-9 && sy + sh <= 900 + 1e-9);
     }
   }
+});
+
+
+test('quilt draws exactly one instrument-colored square per placement', () => {
+  const calls = tileSnapshot('quilt', tileTone);
+  assert.equal(calls.filter(c => c[0] === 'fillRect').length, 1);
+  assert.ok(calls.some(c => c[0] === 'set' && c[1] === 'fillStyle' && c[2] === '#8be9fd'));
+  assert.equal(calls.some(c => c[0] === 'drawImage'), false);
 });
