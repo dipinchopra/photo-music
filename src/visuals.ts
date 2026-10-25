@@ -6,7 +6,7 @@ export const VISUAL_MODES: { id: VisualMode; label: string; description: string 
   { id: 'living', label: 'Living photo', description: 'Soft refraction with + markers, including in recordings.' },
   { id: 'fragments', label: 'Floating fragments', description: 'Organic pieces of the photo lift and drift together.' },
   { id: 'ribbons', label: 'Photo ribbons', description: 'Strips of the image bend into flowing, layered ribbons.' },
-  { id: 'shapes', label: 'Instrument shapes', description: 'Translucent instrument colors blend where shapes overlap, like a Venn diagram.' },
+  { id: 'shapes', label: 'Instrument shapes', description: 'Solid instrument colors. New shapes layer over older ones. Keys: circles. Guitar: leaves. Bass: squares. Drums: diamonds.' },
 ];
 export type Point = { x: number; y: number };
 
@@ -23,6 +23,10 @@ export function visualOutline(placement: Placement, mode: VisualMode, time = 0):
   if (mode === 'shapes' && placement.instrument === 'drums') {
     return [{ x, y: y - r }, { x: x + r, y }, { x, y: y + r }, { x: x - r, y }];
   }
+  if (mode === 'shapes' && placement.instrument === 'bass') {
+    return [{ x: x - r, y: y - r }, { x: x + r, y: y - r },
+      { x: x + r, y: y + r }, { x: x - r, y: y + r }];
+  }
   return Array.from({ length: 80 }, (_, i) => {
     const angle = i / 80 * Math.PI * 2;
     let px = Math.cos(angle), py = Math.sin(angle);
@@ -32,8 +36,6 @@ export function visualOutline(placement: Placement, mode: VisualMode, time = 0):
     } else if (mode === 'shapes') {
       if (placement.instrument === 'guitar') {
         px *= 1.2; py *= Math.abs(py) * 0.7;
-      } else if (placement.instrument === 'bass') {
-        px *= 1.35; py *= 0.62;
       }
     }
     return { x: x + px * r, y: y + py * r };
@@ -106,16 +108,15 @@ export function drawVisual(ctx: CanvasRenderingContext2D, image: HTMLImageElemen
       ctx.restore();
     }
   } else if (mode === 'shapes') {
-    // Screen blending combines every layer's color without covering the photo
-    // or replacing earlier shapes. It also makes intersections order independent.
+    // Opaque source-over fills preserve placement order as visible layers.
     traceOutline(ctx, visualOutline(placement, mode, time));
-    ctx.globalCompositeOperation = 'screen';
+    ctx.globalCompositeOperation = 'source-over';
     ctx.fillStyle = color;
-    ctx.globalAlpha = 0.42;
+    ctx.globalAlpha = 1;
     ctx.fill();
     ctx.strokeStyle = color;
     ctx.lineWidth = 1.25;
-    ctx.globalAlpha = 0.65 + hit * 0.15;
+    ctx.globalAlpha = 1;
     ctx.stroke();
   } else {
     const outline = visualOutline(placement, mode, time);

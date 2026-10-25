@@ -22,11 +22,12 @@ test('all four treatments have valid hit targets; Keys shares the living circle 
     assert.ok(Math.abs(Math.hypot(point.x - placement.x, point.y - placement.y) - placement.radius) < 1e-9);
   }
 });
-test('instrument shapes differ and hit testing follows elongated edges', () => {
+test('instrument shapes differ and Bass has a plain square hit target', () => {
   const outlines = ['keys', 'guitar', 'bass', 'drums'].map(instrument => JSON.stringify(visualOutline({ ...placement, instrument }, 'shapes')));
   assert.equal(new Set(outlines).size, 4);
-  assert.ok(hitVisual({ ...placement, instrument: 'bass' }, 'shapes', 260, 200));
-  assert.equal(hitVisual({ ...placement, instrument: 'bass' }, 'shapes', 200, 245), false);
+  assert.equal(hitVisual({ ...placement, instrument: 'bass' }, 'shapes', 260, 200), false);
+  assert.ok(hitVisual({ ...placement, instrument: 'bass' }, 'shapes', 245, 245));
+  assert.equal(visualOutline({ ...placement, instrument: 'bass' }, 'shapes').length, 4);
 });
 test('every renderer clips to the photo and preserves the musical placement', () => {
   const bounds = { x: 0, y: 0, width: 400, height: 300 };
@@ -40,7 +41,7 @@ test('every renderer clips to the photo and preserves the musical placement', ()
     assert.ok(calls.some(call => call[0] === 'rect' && call[3] === 400 && call[4] === 300));
     assert.ok(calls.some(call => call[0] === 'clip'));
     assert.equal(calls.some(call => call[0] === 'drawImage'), mode.id !== 'shapes',
-      'translucent shapes must not paint opaque photo copies over earlier layers');
+      'solid shapes use instrument colors rather than photo copies');
     assert.equal(immutable.x, 200); assert.equal(immutable.y, 200);
     assert.equal(calls.filter(call => call[0] === 'save').length, calls.filter(call => call[0] === 'restore').length);
   }
