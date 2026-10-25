@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 const source = stripTypeScriptTypes(readFileSync(new URL('../src/visuals.ts', import.meta.url), 'utf8'));
-const { VISUAL_MODES, visualOutline, hitVisual, findEditablePlacement, drawVisual, drawVisualOutline } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+const { VISUAL_MODES, visualOutline, hitVisual, findEditablePlacement, drawVisual, drawPlacementMarker } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 const placement = { id: 1, x: 200, y: 200, radius: 50, instrument: 'keys' };
 
 test('all four treatments have valid hit targets; Keys shares the living circle outline', () => {
@@ -63,13 +63,15 @@ test('tap-to-remove targets only the selected instrument in every visual mode', 
 });
 
 
-test('every visual mode has a persistent colored outline without a note hit', () => {
+test('every visual mode keeps a plus marker without a surrounding outline', () => {
   for (const { id } of VISUAL_MODES) {
-    const state = {}, strokes = [];
+    const state = {}, strokes = [], paths = [];
     const ctx = new Proxy(state, { get: (target, key) => key === 'stroke'
       ? () => strokes.push({ color: target.strokeStyle, alpha: target.globalAlpha, width: target.lineWidth })
-      : () => {}, set: (target, key, value) => { target[key] = value; return true; } });
-    drawVisualOutline(ctx, { x: 0, y: 0, width: 400, height: 300 }, placement, id, 0, '#8be9fd');
-    assert.ok(strokes.some(s => s.color === '#8be9fd' && s.alpha === 1 && s.width >= 1.5), id);
+      : (...args) => paths.push([key, ...args]), set: (target, key, value) => { target[key] = value; return true; } });
+    drawPlacementMarker(ctx, { x: 0, y: 0, width: 400, height: 300 }, placement, '#8be9fd');
+    assert.ok(strokes.some(s => s.color === '#8be9fd' && s.alpha === 1), id);
+    assert.equal(paths.filter(p => p[0] === 'lineTo').length, 2);
+    assert.equal(paths.some(p => p[0] === 'arc' || p[0] === 'closePath'), false);
   }
 });
