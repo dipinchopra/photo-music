@@ -5,7 +5,7 @@ import { stripTypeScriptTypes } from 'node:module';
 
 const source = readFileSync(new URL('../src/composition.ts', import.meta.url), 'utf8');
 const compiled = stripTypeScriptTypes(source);
-const { composeImage, phraseStep, scaleNote, melodyEvent } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
+const { composeImage, phraseStep, scaleNote, melodyEvent, circleEvent } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 const tone = (hue, brightness, texture = 0.2, saturation = 0.6) => ({ hue, brightness, texture, saturation });
 const dark = Array.from({ length: 16 }, (_, i) => tone(210 + i, 0.18, 0.1));
 const bright = Array.from({ length: 16 }, (_, i) => tone(30 + i, 0.8, 0.8));
@@ -69,5 +69,14 @@ test('lead phrases guarantee breathing space across images and variation levels'
         assert.ok(onsets.every(step => step % 32 <= 26));
       }
     }
+  }
+});
+
+
+test('color changes during sway preserve the shared rhythmic grid', () => {
+  const composition = composeImage(bright);
+  for (let lane = 0; lane < 8; lane++) {
+    const rhythm = cell => Array.from({ length: 64 }, (_, step) => circleEvent(composition, cell, step, 0.52, lane).active);
+    assert.deepEqual(rhythm(dark[0]), rhythm(bright[0]));
   }
 });

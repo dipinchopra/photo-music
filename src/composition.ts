@@ -100,8 +100,9 @@ export function melodyEvent(composition: Composition, step: number, complexity: 
 
 
 /** Each placed circle gets a stable musical lane, even on similar colors. */
-export function circleEvent(composition: Composition, tone: ImageTone, step: number, complexity: number, lane: number) {
-  const seed = composition.seed ^ Math.round(tone.hue * 127 + tone.texture * 4093 + tone.brightness * 8191);
-  const offset = lane === 0 ? 0 : (lane * 3 + Math.floor(tone.hue / 90)) % 8;
-  return melodyEvent({ ...composition, seed }, step + offset, complexity);
+export function circleEvent(composition: Composition, _tone: ImageTone, step: number, complexity: number, lane: number) {
+  // Color shapes pitch and timbre, while all parts share the same rhythmic motif.
+  // Whole-beat lane offsets preserve that groove as circles are added or moved.
+  const offset = lane * 2 % 8;
+  return melodyEvent(composition, step + offset, complexity);
 }

@@ -29,9 +29,6 @@ export default function App() {
   const placementsRef = useRef<Placement[]>([]);
   const livePlacementsRef = useRef(new Map<number, Placement>());
   const beatRef = useRef<number | null>(null);
-  const tempoRef = useRef(96);
-  const beatProgressRef = useRef(0);
-  const beatTimeRef = useRef(0);
   const visualHitsRef = useRef(new Map<number, number>());
   const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
   const dragRef = useRef<{
@@ -63,10 +60,10 @@ export default function App() {
   const [fourOnFloor, setFourOnFloor] = useState(false);
   const [controls, setControls] = useState({
     tempo: 96, pitch: 0, complexity: 52, space: 58,
-    keys: 78, keysTone: 62, keysSustain: 55, keysDelay: 42,
-    guitar: 70, guitarTone: 58, guitarStrum: 50, guitarDelay: 38,
-    bass: 68, bassDepth: 70, bassMovement: 45, bassDelay: 12,
-    drums: 60, drumPunch: 70, drumDensity: 50, drumDelay: 8,
+    keys: 78, keysTone: 62, keysSustain: 55, keysDelay: 0,
+    guitar: 70, guitarTone: 58, guitarStrum: 50, guitarDelay: 0,
+    bass: 68, bassDepth: 70, bassMovement: 45, bassDelay: 0,
+    drums: 60, drumPunch: 70, drumDensity: 50, drumDelay: 0,
   });
 
   const [motion, setMotion] = useState<Motion>('off');
@@ -223,33 +220,24 @@ export default function App() {
 
   const startBeat = () => {
     if (beatRef.current) return;
-    beatTimeRef.current = performance.now();
     beatRef.current = window.setInterval(() => {
-      const now = performance.now();
-      if (!music.running) { beatTimeRef.current = now; return; }
-      beatProgressRef.current += (now - beatTimeRef.current) / music.stepDuration(tempoRef.current);
-      beatTimeRef.current = now;
-      if (beatProgressRef.current < 1) return;
-      // Keep phase between ticks without bursting missed notes after backgrounding.
-      beatProgressRef.current %= 1;
+      if (!music.needsScheduling) return;
       if (motionRef.current !== 'off') {
         const moving = scenePlacements().map(placement => ({
           ...placement, tone: sampleToneAt(placement.x, placement.y, placement.radius) ?? placement.tone,
         }));
         music.updatePlacements([...moving, ...livePlacementsRef.current.values()]);
       }
-      music.pulse();
-    }, 16);
+      music.schedule();
+    }, 25);
   };
 
   const stopBeat = () => {
     if (beatRef.current) clearInterval(beatRef.current);
     beatRef.current = null;
-    beatProgressRef.current = 0;
   };
 
   useEffect(() => {
-    tempoRef.current = controls.tempo;
     music.configure({
       tempo: controls.tempo,
       transpose: controls.pitch,
@@ -378,7 +366,6 @@ export default function App() {
       await music.playPlacements(placementsRef.current);
       if (document.hidden) return;
       if (music.running) {
-        beatTimeRef.current = performance.now();
         startBeat();
       }
       setAudioPaused(!music.running);
@@ -452,8 +439,6 @@ export default function App() {
         const composition = composeImage(cells);
         music.setComposition(composition);
         setImageStyle({ ambient: 'Soft atmosphere', glass: 'Glass bells', plucked: 'Plucked groove', pulse: 'Synth pulse' }[composition.style]);
-        tempoRef.current = composition.tempo;
-        beatProgressRef.current = 0;
         setControls(current => ({ ...current, tempo: composition.tempo }));
       }
       stopLive();

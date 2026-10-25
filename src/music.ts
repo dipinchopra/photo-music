@@ -57,8 +57,35 @@ export class ChordEngine {
   private feedback: GainNode | null = null;
   private placements: Placement[] = [];
   private activeGains: GainNode[] = [];
-  private activeOscillators: OscillatorNode[] = [];
+  private activeSources: AudioScheduledSourceNode[] = [];
+  private sourceStarts = new WeakMap<AudioScheduledSourceNode, number>();
   private step = 0;
+  private nextStepTime: number | null = null;
+  private scheduledTime: number | null = null;
+  private hitTimers = new Set<number>();
+
+  private get noteTime() { return this.scheduledTime ?? this.context!.currentTime; }
+
+  private placementHit(id: number) {
+    const wait = (this.noteTime - this.context!.currentTime) * 1000;
+    if (wait < 5) { this.onPlacementHit?.(id); return; }
+    const timer = window.setTimeout(() => {
+      this.hitTimers.delete(timer);
+      this.onPlacementHit?.(id);
+    }, wait);
+    this.hitTimers.add(timer);
+  }
+
+  schedule() {
+    if (!this.running || !this.placements.length) { this.nextStepTime = null; return; }
+    const now = this.context!.currentTime;
+    // Never burst missed notes after a stalled tab or an audio interruption.
+    if (this.nextStepTime === null || this.nextStepTime < now) this.nextStepTime = now + 0.02;
+    while (this.nextStepTime < now + 0.1) {
+      this.pulse(this.nextStepTime);
+      this.nextStepTime += this.stepDuration(this.controls.tempo) / 1000;
+    }
+  }
   private keyHistory = new Map<number, { pitch: number; step: number }>();
   private composition: Composition = composeImage([]);
   private variation = 0.5;
@@ -66,22 +93,24 @@ export class ChordEngine {
   onPlaybackState: ((running: boolean) => void) | null = null;
 
   get running() { return this.context?.state === 'running'; }
+  get needsScheduling() { return this.running && (this.nextStepTime === null || this.nextStepTime < this.context!.currentTime + 0.1); }
 
   stepDuration(tempo: number) {
     return (30000 / tempo) * (1 + (this.step % 2 === 1 ? 1 : -1) * this.composition.swing);
   }
   private controls: MusicControls = {
     tempo: 96, transpose: 0, complexity: 0.5, space: 0.55,
-    keys: 0.78, keysTone: 0.62, keysSustain: 0.55, keysDelay: 0.42,
-    guitar: 0.7, guitarTone: 0.58, guitarStrum: 0.5, guitarDelay: 0.38,
-    bass: 0.68, bassDepth: 0.7, bassMovement: 0.45, bassDelay: 0.12,
-    drums: 0.6, drumPunch: 0.7, drumDensity: 0.5, drumDelay: 0.08, fourOnFloor: false,
+    keys: 0.78, keysTone: 0.62, keysSustain: 0.55, keysDelay: 0,
+    guitar: 0.7, guitarTone: 0.58, guitarStrum: 0.5, guitarDelay: 0,
+    bass: 0.68, bassDepth: 0.7, bassMovement: 0.45, bassDelay: 0,
+    drums: 0.6, drumPunch: 0.7, drumDensity: 0.5, drumDelay: 0, fourOnFloor: false,
   };
 
   setComposition(composition: Composition) {
     this.composition = composition;
     this.variation = randomAt(composition.seed, 3);
     this.step = 0;
+    this.nextStepTime = null;
     this.keyHistory.clear();
     this.updateSpace();
   }
@@ -100,7 +129,7 @@ export class ChordEngine {
   async unlock() {
     if (!this.context || this.context.state === 'closed') {
       this.activeGains = [];
-      this.activeOscillators = [];
+      this.activeSources = [];
       const AudioContextClass = window.AudioContext ||
         (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
       if (!AudioContextClass) return;
@@ -142,7 +171,7 @@ export class ChordEngine {
     const wasEmpty = this.placements.length === 0;
     this.updatePlacements(placements);
     await this.unlock();
-    if (wasEmpty && this.placements.length) this.pulse();
+    if (wasEmpty && this.placements.length) this.schedule();
   }
 
   updatePlacements(placements: Placement[]) {
@@ -152,9 +181,9 @@ export class ChordEngine {
   }
 
   private tone(frequency: number, volume: number, duration: number, type: OscillatorType,
-    cutoff: number, attack = 0.015, send = 0.35) {
+    cutoff: number, attack = 0.015, send = 0) {
     if (!this.context || !this.output) return;
-    const now = this.context.currentTime;
+    const now = this.noteTime;
     const osc = this.context.createOscillator();
     const gain = this.context.createGain();
     const filter = this.context.createBiquadFilter();
@@ -176,11 +205,18 @@ export class ChordEngine {
     }
     osc.start(now);
     osc.stop(now + duration + 0.05);
-    this.activeOscillators.push(osc);
+    this.trackSource(osc, gain, now);
+  }
+
+  private trackSource(source: AudioScheduledSourceNode, gain: GainNode, start: number) {
+    this.sourceStarts.set(source, start);
+    this.activeSources.push(source);
     this.activeGains.push(gain);
-    osc.onended = () => {
-      this.activeOscillators = this.activeOscillators.filter((item) => item !== osc);
-      this.activeGains = this.activeGains.filter((item) => item !== gain);
+    source.onended = () => {
+      this.activeSources = this.activeSources.filter(item => item !== source);
+      this.activeGains = this.activeGains.filter(item => item !== gain);
+      source.disconnect();
+      gain.disconnect();
     };
   }
 
@@ -209,7 +245,7 @@ export class ChordEngine {
 
   private kick(volume: number, send = 0) {
     if (!this.context || !this.output) return;
-    const now = this.context.currentTime;
+    const now = this.noteTime;
     const osc = this.context.createOscillator();
     const gain = this.context.createGain();
     osc.type = 'sine';
@@ -227,6 +263,7 @@ export class ChordEngine {
     }
     osc.start(now);
     osc.stop(now + 0.28);
+    this.trackSource(osc, gain, now);
   }
 
   private noise(volume: number, bright: boolean, open = false, send = 0) {
@@ -238,7 +275,7 @@ export class ChordEngine {
     const source = this.context.createBufferSource();
     const filter = this.context.createBiquadFilter();
     const gain = this.context.createGain();
-    const now = this.context.currentTime;
+    const now = this.noteTime;
     source.buffer = buffer;
     filter.type = bright ? 'highpass' : 'bandpass';
     filter.frequency.value = bright ? (open ? 5000 : 6800) : 1550;
@@ -254,6 +291,7 @@ export class ChordEngine {
       sendGain.connect(this.delay);
     }
     source.start(now);
+    this.trackSource(source, gain, now);
   }
 
   private snare(volume: number, saturation: number, send: number) {
@@ -261,8 +299,9 @@ export class ChordEngine {
     this.tone(175 + saturation * 45, volume * 0.42, 0.13, 'triangle', 520, 0.004, send);
   }
 
-  pulse(): Instrument[] {
+  pulse(atTime?: number): Instrument[] {
     if (!this.placements.length || !this.running) return [];
+    this.scheduledTime = atTime ?? this.context!.currentTime;
     const hits = new Set<Instrument>();
     const composition = this.composition;
     const bar = Math.floor(this.step / 8);
@@ -299,7 +338,7 @@ export class ChordEngine {
       const pitch = scaleNote(composition, degree) + this.controls.transpose + register;
       if (previous?.pitch === pitch && this.step - previous.step < 4) continue;
       hits.add('keys');
-      this.onPlacementHit?.(placement.id);
+      this.placementHit(placement.id);
       this.keyHistory.set(placement.id, { pitch, step: this.step });
       keyAttacks++;
       const secondsPerStep = 60 / this.controls.tempo / 2;
@@ -318,7 +357,7 @@ export class ChordEngine {
       guitarAttacks++;
       const phrase = phraseStep(composition, placement.tone, this.step + 3, this.controls.complexity);
       hits.add('guitar');
-      this.onPlacementHit?.(placement.id);
+      this.placementHit(placement.id);
       const base = root + (Math.abs(phrase.degree) % 3) * 2;
       const degrees = this.controls.guitarStrum > 0.58 ? [base, base + 2, base + 4] : [base];
       degrees.forEach((degree, index) => {
@@ -333,17 +372,18 @@ export class ChordEngine {
     for (let voice = 0; voice < bass.length; voice++) {
       const lane = (voice + Math.floor(this.step / 2)) % bass.length;
       const placement = bass[lane];
-      const event = circleEvent(composition, placement.tone, this.step, this.controls.bassMovement, lane);
-      if (!this.controls.bass || !event.active || bassAttacks >= 1) continue;
+      const bassBeat = beat === 0 || beat === 4 || (this.controls.bassMovement > 0.32 && (beat === 2 || beat === 6))
+        || (this.controls.bassMovement > 0.75 && beat === 7 && bar % 4 === 3);
+      if (!this.controls.bass || !bassBeat || bassAttacks >= 1) continue;
       bassAttacks++;
       hits.add('bass');
-      this.onPlacementHit?.(placement.id);
+      this.placementHit(placement.id);
       const nextRoot = composition.progression[(bar + 1) % composition.progression.length];
       const colorDegree = [0, 2, 4][Math.min(2, Math.floor(placement.tone.hue / 120))];
       const degree = beat === 7 && this.controls.bassMovement > 0.58 ? nextRoot - 1
         : root + (beat === 0 && lane === 0 ? 0 : colorDegree);
       const register = this.controls.bassDepth > 0.66 ? 0 : 12;
-      this.tone(noteAt(degree, register), 0.12 * placement.level * this.controls.bass * event.accent,
+      this.tone(noteAt(degree, register), 0.12 * placement.level * this.controls.bass * (beat % 4 === 0 ? 0.85 : 0.65),
         composition.style === 'pulse' ? 0.2 : beat % 4 === 0 ? 0.62 : 0.38,
         composition.style === 'pulse' ? 'triangle' : 'sine', 350 + placement.tone.texture * 400 + composition.energy * 600, 0.012, this.controls.bassDelay);
     }
@@ -363,7 +403,7 @@ export class ChordEngine {
           : this.controls.complexity < 0.35 ? [0, 4] : kickPatterns[variation];
         if (pattern.includes(beat)) {
           hits.add('drums');
-          this.onPlacementHit?.(placement.id);
+          this.placementHit(placement.id);
           this.kick((0.11 + this.controls.drumPunch * 0.14) * volume, this.controls.drumDelay);
         }
       } else if (brightness < 0.68) {
@@ -371,7 +411,7 @@ export class ChordEngine {
         const pattern = this.controls.complexity < 0.35 ? [2, 6] : snarePatterns[variation];
         if (pattern.includes(beat) || (fill && composition.energy > 0.45)) {
           hits.add('drums');
-          this.onPlacementHit?.(placement.id);
+          this.placementHit(placement.id);
           this.snare((0.05 + this.controls.drumPunch * 0.075) * volume,
             placement.tone.saturation, this.controls.drumDelay);
         }
@@ -382,30 +422,36 @@ export class ChordEngine {
         const pattern = placement.tone.texture * 0.35 + this.controls.drumDensity * 0.45 + composition.energy * 0.35 > 0.58 ? dense : sparse;
         if (pattern.includes(beat)) {
           hits.add('drums');
-          this.onPlacementHit?.(placement.id);
+          this.placementHit(placement.id);
           const open = placement.tone.texture > 0.62 && beat === 7;
           this.noise((open ? 0.036 : beat % 2 === 0 ? 0.026 : 0.017) * volume, true, open, this.controls.drumDelay);
         }
       }
     });
     this.step++;
+    this.scheduledTime = null;
     return [...hits];
   }
 
   stop(release = 0.12) {
     this.placements = [];
+    this.nextStepTime = null;
+    this.scheduledTime = null;
+    this.hitTimers.forEach(timer => window.clearTimeout(timer));
+    this.hitTimers.clear();
     this.keyHistory.clear();
     if (!this.context) return;
-    const now = this.context.currentTime;
+    const now = this.noteTime;
     this.activeGains.forEach((gain) => {
       gain.gain.cancelScheduledValues(now);
       gain.gain.setTargetAtTime(0.0001, now, 0.025);
     });
-    const oscillators = [...this.activeOscillators];
-    this.activeOscillators = [];
+    const sources = [...this.activeSources];
+    this.activeSources = [];
     this.activeGains = [];
-    window.setTimeout(() => oscillators.forEach((osc) => {
-      try { osc.stop(); } catch {}
-    }), release * 1000 + 70);
+    // Cancel future drum and melody attacks as well as releasing sounding notes.
+    sources.forEach(source => {
+      try { source.stop((this.sourceStarts.get(source) ?? 0) >= now ? now : now + Math.min(release, 0.025)); } catch {}
+    });
   }
 }
