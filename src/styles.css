@@ -510,3 +510,6 @@ html, body, #root, .app, .app * {
 .visualChoices > small { color: #aaa; font-size: 10px; line-height: 1.5; }
 .liveMixControls { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 22px; }
 .liveMixControls label { display: flex; flex-direction: column; gap: 8px; }
+.sampleTriggerControls { display: flex; flex: 0 0 auto; gap: 4px; align-items: stretch; padding-right: 8px; border-right: 1px solid #ffffff15; }
+.instrumentDock .sampleTriggerControls button { flex: 0 0 auto; min-width: 64px; padding: 9px; }
+.liveMixControls select { width: 100%; padding: 8px; border: 1px solid #ffffff25; border-radius: 8px; background: #222; color: #eee; }

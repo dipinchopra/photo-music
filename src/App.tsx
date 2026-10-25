@@ -7,7 +7,7 @@ import { EditHistory } from './history';
 import { PlaybackRecovery } from './playback';
 import { ChordEngine, type Instrument, type Placement } from './music';
 import { PHOTO_PADS, PAD_KEYS, photoPadAt, photoPadBounds, enterPhotoPad } from './pads';
-import { drawPadHit, drawPadGuides, PAD_EFFECT_SECONDS, type PadHit } from './padVisuals';
+import { drawPadHit, PAD_EFFECT_SECONDS, type PadHit } from './padVisuals';
 
 const music = new ChordEngine();
 const INSTRUMENTS: Array<{ id: Instrument; label: string; color: string }> = [
@@ -99,7 +99,11 @@ export default function App() {
   const [mode, setMode] = useState<'place' | 'live'>('place');
   const modeRef = useRef(mode);
   modeRef.current = mode;
-  const [hasPlayedPad, setHasPlayedPad] = useState(false);
+  const [sampleTrigger, setSampleTrigger] = useState<'once' | 'loop'>('once');
+  const sampleTriggerRef = useRef(sampleTrigger); sampleTriggerRef.current = sampleTrigger;
+  const [repeatBeats, setRepeatBeats] = useState(4);
+  const repeatBeatsRef = useRef(repeatBeats); repeatBeatsRef.current = repeatBeats;
+  const [loopPads, setLoopPads] = useState<number[]>([]);
   const [kitStatus, setKitStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [radius, setRadius] = useState(50);
   const [fourOnFloor, setFourOnFloor] = useState(true);
@@ -205,12 +209,14 @@ export default function App() {
 
   useEffect(() => {
     music.onPlacementHit = id => visualHitsRef.current.set(id, 1);
+    music.onSampleHit = pad => padHitsRef.current.set(pad, { pad, started: performance.now() / 1000 });
     const canvas = canvasRef.current;
     const prevent = (event: Event) => event.preventDefault();
     canvas?.addEventListener('touchstart', prevent, { passive: false });
     canvas?.addEventListener('selectstart', prevent);
     return () => {
       music.onPlacementHit = null;
+      music.onSampleHit = null;
       canvas?.removeEventListener('touchstart', prevent);
       canvas?.removeEventListener('selectstart', prevent);
     };
@@ -249,16 +255,16 @@ export default function App() {
     const frameDue = now - recordingFrameTimeRef.current >= 1000 / 30 - 1;
     if (exportFrame && !frameDue) {
       ctx.drawImage(cropped, dx, dy, dw, dh);
-      if (modeRef.current === 'live') drawPadGuides(ctx,
-        { x: dx / dpr, y: dy / dpr, width: dw / dpr, height: dh / dpr }, dpr);
       return;
     }
     const photo = recordingPhotoRef.current ?? image;
 
-    const drawnPlacements = modeRef.current === 'place' ? scenePlacements() : [];
+    const drawnPlacements = scenePlacements();
 
     const visualTime = motionRef.current === 'off' ? 0 : motionSecondsRef.current;
     const renderVisuals = (target: CanvasRenderingContext2D, scale: number) => {
+      padHitsRef.current.forEach(hit => drawPadHit(target, photo,
+        { x: dx / dpr, y: dy / dpr, width: dw / dpr, height: dh / dpr }, hit, now / 1000, scale));
       drawnPlacements.forEach(placement => {
       const color = INSTRUMENTS.find(item => item.id === placement.instrument)!.color;
       drawVisual(target, photo, { x: dx / dpr, y: dy / dpr, width: dw / dpr, height: dh / dpr },
@@ -267,8 +273,6 @@ export default function App() {
       if (showsPlacementMarker(visualModeRef.current)) drawnPlacements.forEach(placement => drawPlacementMarker(target,
         { x: dx / dpr, y: dy / dpr, width: dw / dpr, height: dh / dpr }, placement,
         INSTRUMENTS.find(item => item.id === placement.instrument)!.color, scale));
-      padHitsRef.current.forEach(hit => drawPadHit(target, photo,
-        { x: dx / dpr, y: dy / dpr, width: dw / dpr, height: dh / dpr }, hit, now / 1000, scale));
     };
     if (cropped && recordingContext) {
       // Render effects once per video frame, then reuse that exact frame for
@@ -285,8 +289,6 @@ export default function App() {
       ctx.drawImage(image, dx, dy, dw, dh);
       renderVisuals(ctx, dpr);
     }
-    if (modeRef.current === 'live') drawPadGuides(ctx,
-      { x: dx / dpr, y: dy / dpr, width: dw / dpr, height: dh / dpr }, dpr);
   };
 
   const sampleScene = (detailed = true) => {
@@ -294,7 +296,7 @@ export default function App() {
       const tone = sampleToneAt(placement.x, placement.y, placement.radius, detailed);
       return tone ? { ...placement, tone: { ...tone, texture: detailed ? tone.texture : placement.tone.texture } } : placement;
     });
-    if (modeRef.current === 'place') music.updatePlacements(moving);
+    music.updatePlacements(moving);
     return moving;
   };
 
@@ -312,7 +314,7 @@ export default function App() {
   };
 
   const startBeat = () => {
-    if (modeRef.current === 'live' || beatRef.current) return;
+    if (beatRef.current) return;
     beatRef.current = window.setInterval(() => {
       if (!music.needsScheduling) return;
       if (motionRef.current !== 'off' || dragRef.current) {
@@ -465,15 +467,19 @@ export default function App() {
     const epoch = liveEpochRef.current;
     const requestedAt = performance.now();
     try {
-      const played = await music.playSample(index, { id: -index - 1, x, y, radius: 40, level: 1,
-        instrument: PHOTO_PADS[index].instrument, tone },
-        () => epoch === liveEpochRef.current && modeRef.current === 'live' && !document.hidden
-          && performance.now() - requestedAt < 250);
-      if (played) {
-        setHasPlayedPad(true);
-        padHitsRef.current.set(index, { pad: index, started: performance.now() / 1000 });
-        setAudioPaused(false);
-      } else if (epoch === liveEpochRef.current) setAudioPaused(true);
+      const placement = { id: -index - 1, x, y, radius: 40, level: 1,
+        instrument: PHOTO_PADS[index].instrument, tone };
+      const valid = () => epoch === liveEpochRef.current && modeRef.current === 'live' && !document.hidden
+        && performance.now() - requestedAt < 250;
+      if (sampleTriggerRef.current === 'loop') {
+        await music.toggleSampleLoop(index, placement, repeatBeatsRef.current, valid);
+        setLoopPads(music.sampleLoopIndices);
+        startBeat();
+      } else {
+        const played = await music.playSample(index, placement, valid);
+        if (!played && valid()) setAudioPaused(true);
+      }
+      if (music.running) setAudioPaused(false);
     } catch { if (epoch === liveEpochRef.current) setAudioPaused(true); }
   };
 
@@ -495,7 +501,14 @@ export default function App() {
     liveEpochRef.current++;
     liveTouchesRef.current.clear();
     padHitsRef.current.clear();
-    music.stopSamples();
+  };
+
+  const stopPadLoops = () => {
+    liveEpochRef.current++;
+    liveTouchesRef.current.clear();
+    music.clearSampleLoops();
+    setLoopPads([]);
+    if (!placementsRef.current.length) stopBeat();
   };
 
   useEffect(() => {
@@ -516,12 +529,12 @@ export default function App() {
   useEffect(() => {
     const recovery = new PlaybackRecovery({
       visible: () => !document.hidden,
-      hasLoops: () => placementsRef.current.length > 0 || (modeRef.current === 'live' && !!imageRef.current),
+      hasLoops: () => placementsRef.current.length > 0 || music.hasSampleLoops || (modeRef.current === 'live' && !!imageRef.current),
       running: () => music.running,
-      play: () => modeRef.current === 'place' && placementsRef.current.length ? music.playPlacements(placementsRef.current) : music.unlock(),
+      play: () => music.playPlacements(placementsRef.current),
       startScheduler: startBeat,
       stopScheduler: stopBeat,
-      pauseAudio: () => { stopLive(); music.stop(); },
+      pauseAudio: () => { stopLive(); music.stop(0.12, true); },
       setPaused: setAudioPaused,
     });
     recoveryRef.current = recovery;
@@ -535,7 +548,7 @@ export default function App() {
     // leave resume() pending forever. Watch the clock rather than that promise.
     const watchdog = window.setInterval(() => {
       const clock = music.playbackTime;
-      if (document.hidden || !imageRef.current || (!placementsRef.current.length && modeRef.current !== 'live')) {
+      if (document.hidden || !imageRef.current || (!placementsRef.current.length && !music.hasSampleLoops && modeRef.current !== 'live')) {
         stalledChecks = 0; rebuilt = false;
       } else if (clock > lastClock) {
         stalledChecks = 0; rebuilt = false;
@@ -545,7 +558,7 @@ export default function App() {
         if (!rebuilt) {
           rebuilt = true;
           stopRecording();
-          void music.rebuildPlayback(modeRef.current === 'place' ? placementsRef.current : []).then(() => recovery.resume()).catch(() => setAudioPaused(true));
+          void music.rebuildPlayback(placementsRef.current).then(() => recovery.resume()).catch(() => setAudioPaused(true));
           startBeat();
         }
       }
@@ -596,7 +609,7 @@ export default function App() {
     });
     motionStartsRef.current.forEach((_, id) => { if (!ids.has(id)) motionStartsRef.current.delete(id); });
     setPlacements(next);
-    if (!next.length || modeRef.current === 'live') { stopBeat(); music.stop(release); setAudioPaused(false); }
+    if (!next.length && !music.hasSampleLoops) { stopBeat(); music.stop(release); setAudioPaused(false); }
     else {
       startBeat();
       void music.playPlacements(next).catch(() => setAudioPaused(true));
@@ -634,7 +647,7 @@ export default function App() {
         setImageStyle({ ambient: 'Soft atmosphere', glass: 'Glass bells', plucked: 'Plucked groove', pulse: 'Synth pulse' }[composition.style]);
         setControls(current => ({ ...current, tempo: composition.tempo }));
       }
-      stopLive();
+      stopLive(); music.stopSamples(); setLoopPads([]);
       updatePlacements([], 0.12, false);
       historyRef.current.clear(); syncHistory();
       setHasImage(true);
@@ -654,7 +667,7 @@ export default function App() {
       </div>
     </header>
     {audioPaused && <div className="recordMessage" role="status"><span>Audio paused</span><button onClick={() => void resumePlayback()}>Resume sound ▶</button></div>}
-    {hasImage && <div className="recordMessage"><span>{mode === 'live' ? 'Dusk · 16 original sample pads' : imageStyle}</span><span>{mode === 'live' ? (kitStatus === 'ready' ? 'Tap or swipe the photo' : kitStatus === 'error' ? 'Kit failed · tap Play live to retry' : 'Loading samples…') : `${controls.tempo} BPM`}</span></div>}
+    {hasImage && <div className="recordMessage"><span>{mode === 'live' ? 'Dusk · 16 original sample pads' : imageStyle}</span><span>{mode === 'live' ? (kitStatus === 'ready' ? (sampleTrigger === 'loop' ? 'Loop · tap again to stop' : 'One-shot · tap or swipe') : kitStatus === 'error' ? 'Kit failed · tap Play live to retry' : 'Loading samples…') : `${controls.tempo} BPM`}</span></div>}
     {recordError && <div className="recordMessage" role="alert">{recordError}</div>}
     {recordingUrl && <div className="recordMessage"><a href={recordingUrl} download={`image-music.${recordingType.includes('mp4') ? 'mp4' : 'webm'}`}>↓ Save recording</a><button onClick={() => { URL.revokeObjectURL(recordingUrl); setRecordingUrl(null); }}>Dismiss</button></div>}
 
@@ -742,20 +755,18 @@ export default function App() {
             if (drag) updatePlacements(drag.before, 0.12, false);
           }}
           onPointerLeave={(e) => { if (mode === 'live' && e.pointerType === 'mouse') stopLive(e.pointerId); }} />
-        {hasImage && (mode === 'live' ? !hasPlayedPad : !placements.length) && <div className="hint">{mode === 'live'
-          ? (kitStatus === 'loading' ? 'Loading the Dusk sample kit…' : kitStatus === 'error' ? 'Kit could not load — tap Play live to retry' : '16 sample pads · tap, swipe, or use keys 1–4 / Q–R / A–F / Z–V')
-          : 'Choose an instrument, set its size, then tap the photo'}</div>}
+        {hasImage && mode === 'place' && !placements.length && <div className="hint">Choose an instrument, set its size, then tap the photo</div>}
       </section>
     </div>
     <section className="performanceBar" aria-label="Common controls">
       <div className="modePicker">
         <button aria-pressed={mode === 'place'} className={mode === 'place' ? 'selected' : ''} onClick={() => { stopLive(); setSheet(null); setMode('place'); modeRef.current = 'place'; void resumePlayback(); }}>Place loops</button>
-        <button aria-pressed={mode === 'live'} className={mode === 'live' ? 'selected' : ''} onClick={() => { stopLive(); stopBeat(); music.stop(); setSheet(null); setMode('live'); modeRef.current = 'live'; void loadLiveKit(); }}>Play live</button>
+        <button aria-pressed={mode === 'live'} className={mode === 'live' ? 'selected' : ''} onClick={() => { stopLive(); setSheet(null); setMode('live'); modeRef.current = 'live'; void loadLiveKit(); void resumePlayback(); }}>Play live</button>
       </div>
       {mode === 'place' && <div className="placementActions">
         <button aria-label="Undo last edit" disabled={!historyState.canUndo} onClick={undoEdit}>↶ <span>Undo</span></button>
         <button aria-label="Redo last edit" disabled={!historyState.canRedo} onClick={redoEdit}>↷ <span>Redo</span></button>
-        <button disabled={!placements.length} onClick={() => { stopLive(); updatePlacements([], 0.9); }}>Clear</button>
+        <button disabled={!placements.length} onClick={() => { stopLive(); music.stopSamples(); setLoopPads([]); updatePlacements([], 0.9); }}>Clear</button>
       </div>}
     </section>
     <div className={`dockRegion ${sheet ? 'sheetExpanded' : ''}`}>
@@ -771,8 +782,14 @@ export default function App() {
         <span className="instrumentGlyph" aria-hidden="true">{['▥', '≋', '⌁', '⠿'][index]}</span>
         <span>{['Keys', 'Guitar', 'Bass', 'Drums'][index]}</span><i />
       </button>)}
+      {mode === 'live' && <div className="sampleTriggerControls" role="group" aria-label="Sample playback">
+        <button className={sampleTrigger === 'once' ? 'active' : ''} aria-pressed={sampleTrigger === 'once'} onClick={() => setSampleTrigger('once')}>One-shot</button>
+        <button className={sampleTrigger === 'loop' ? 'active' : ''} aria-pressed={sampleTrigger === 'loop'} onClick={() => setSampleTrigger('loop')}>Loop</button>
+        <button disabled={!loopPads.length} onClick={stopPadLoops}>Stop loops</button>
+      </div>}
       {mode === 'live' && PHOTO_PADS.map((pad, index) => <button key={pad.file}
-        disabled={kitStatus !== 'ready' || !hasImage} aria-label={`Play ${pad.name}`}
+        disabled={kitStatus !== 'ready' || !hasImage} aria-label={`${sampleTrigger === 'loop' && loopPads.includes(index) ? 'Stop looping' : 'Play'} ${pad.name}`}
+        className={loopPads.includes(index) ? 'active' : ''} aria-pressed={loopPads.includes(index)}
         style={{ '--instrument-color': INSTRUMENTS.find(item => item.id === pad.instrument)!.color } as React.CSSProperties}
         onClick={() => void triggerPad(index)}>
         <span className="instrumentGlyph" aria-hidden="true">{PAD_KEYS[index].toUpperCase()}</span><span>{pad.name}</span>
@@ -860,6 +877,8 @@ export default function App() {
             <Slider value={controls.space} onChange={(value) => setControl('space', value)} /></label></div>}
 
         {sheet === 'mix' && mode === 'live' && <div className="liveMixControls">
+          <label><span>Loop repeats</span><select value={repeatBeats} onChange={event => setRepeatBeats(Number(event.target.value))}><option value={1}>Every beat</option><option value={4}>Every bar · 4 beats</option></select><small>Applies to the next sample you loop.</small></label>
+          <label><span>Tempo <output>{controls.tempo} BPM</output></span><Slider min={55} max={160} value={controls.tempo} onChange={value => setControl('tempo', value)} /></label>
           {([['keys', 'Chords'], ['guitar', 'Textures'], ['bass', 'Bass'], ['drums', 'Drums']] as const).map(([key, label]) => <label key={key}><span>{label} <output>{controls[key]}%</output></span><Slider value={controls[key]} onChange={value => setControl(key, value)} /></label>)}
           <label><span>Pitch <output>{controls.pitch > 0 ? '+' : ''}{controls.pitch} st</output></span><Slider min={-12} max={12} value={controls.pitch} onChange={value => setControl('pitch', value)} /></label>
         </div>}

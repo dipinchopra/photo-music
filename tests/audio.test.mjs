@@ -364,3 +364,74 @@ test('bright Place Loops partials have softened attacks and stay below the outpu
   engine.tone(context.sampleRate * .48, .1, .3, 'sine', 12000, .002);
   assert.equal(context.oscillators.length, before, 'inaudible/alias-prone partials are omitted');
 });
+
+test('looping samples repeat on the shared beat clock alongside placed instruments', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(48) });
+  try {
+    const engine = new ChordEngine();
+    engine.setComposition({ ...composeImage([cell]), style: 'plucked', swing: 0 });
+    engine.configure({tempo: 120, fourOnFloor: true});
+    await engine.prepareSamples('https://example.com/samples/');
+    const drum = { ...placement, id: 2, instrument: 'drums', tone: { ...cell, brightness: .1 } };
+    await engine.playPlacements([placement, drum]);
+    await engine.toggleSampleLoop(12, drum, 1);
+    const context = Context.instances.at(-1);
+    for (let step = 1; step <= 8; step++) { context.currentTime = step * .25; engine.schedule(); }
+    const times = context.bufferSources.filter(source => source.buffer?.original).map(source => source.startTime);
+    assert.ok(times.length >= 3);
+    for (let i = 1; i < times.length; i++) assert.ok(Math.abs(times[i] - times[i-1] - .5) < 1e-9);
+    for (const time of times) assert.ok(context.oscillators.some(source => source.startTime === time),
+      'placed kick and sampled kick use precisely the same timestamp');
+    assert.ok(context.oscillators.length > 0, 'live samples do not replace the placed instruments');
+    await engine.toggleSampleLoop(12, drum, 1);
+    assert.deepEqual(engine.sampleLoopIndices, []);
+    assert.ok(engine.placements.length > 0, 'stopping the pad loop leaves the board playing');
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('sample-only loops repeat by bar, and pause/recovery retains their state', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(48) });
+  try {
+    const engine = new ChordEngine();
+    engine.setComposition({ ...composeImage([cell]), swing: 0 }); engine.configure({tempo: 120});
+    await engine.prepareSamples('https://example.com/samples/');
+    await engine.toggleSampleLoop(0, placement, 4);
+    const context = Context.instances.at(-1);
+    for (let step = 1; step <= 17; step++) { context.currentTime = step * .25; engine.schedule(); }
+    const times = context.bufferSources.filter(source => source.buffer?.original).map(source => source.startTime);
+    assert.equal(times.length, 3);
+    assert.ok(Math.abs(times[1] - times[0] - 2) < 1e-9);
+    assert.ok(Math.abs(times[2] - times[1] - 2) < 1e-9);
+    engine.stop(.12, true);
+    assert.deepEqual(engine.sampleLoopIndices, [0]);
+    const before = context.bufferSources.filter(source => source.buffer?.original).length;
+    await engine.playPlacements([]);
+    assert.ok(context.bufferSources.filter(source => source.buffer?.original).length > before, 'sample loop returns without needing a board placement');
+    context.close = async () => { context.state = 'closed'; };
+    await engine.rebuildPlayback([]);
+    assert.deepEqual(engine.sampleLoopIndices, [0]);
+    assert.ok(Context.instances.at(-1).bufferSources.some(source => source.buffer?.original));
+    engine.clearSampleLoops(); assert.equal(engine.hasSampleLoops, false);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('one-shot samples never repeat, and removing a loop cancels its scheduled hit', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(48) });
+  try {
+    const engine = new ChordEngine();
+    await engine.prepareSamples('https://example.com/samples/');
+    await engine.playSample(0, placement);
+    const context = Context.instances.at(-1);
+    for (let i = 1; i < 20; i++) { context.currentTime = i; engine.schedule(); }
+    assert.equal(context.bufferSources.filter(source => source.buffer?.original).length, 1);
+    await engine.toggleSampleLoop(1, placement, 4);
+    const future = context.bufferSources.at(-1);
+    assert.ok(future.startTime > context.currentTime);
+    await engine.toggleSampleLoop(1, placement, 4);
+    assert.equal(future.stopTime, context.currentTime);
+    assert.equal(engine.hitTimers.size, 0);
+  } finally { globalThis.fetch = originalFetch; }
+});

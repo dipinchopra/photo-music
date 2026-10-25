@@ -74,7 +74,11 @@ export class ChordEngine {
   private scheduledTime: number | null = null;
   private hitTimers = new Set<number>();
   private samples = new SampleBank();
-  private sampleVoices: { source: AudioBufferSourceNode; gain: GainNode }[] = [];
+  private sampleVoices: { source: AudioBufferSourceNode; gain: GainNode; index: number; repeating: boolean; timer?: number }[] = [];
+  private sampleLoops = new Map<number, { placement: Placement; everySteps: number; startStep: number }>();
+  get sampleLoopIndices() { return [...this.sampleLoops.keys()]; }
+  get hasSampleLoops() { return this.sampleLoops.size > 0; }
+  onSampleHit: ((index: number) => void) | null = null;
   get samplesReady() { return this.samples.ready; }
 
   async prepareSamples(baseUrl: string) {
@@ -90,7 +94,12 @@ export class ChordEngine {
     if (!buffer || !PHOTO_PADS[index]) return false;
     await this.unlock();
     if (!valid() || !this.running || !this.context || !this.output) return false;
-    const now = this.context.currentTime;
+    return this.startSample(index, placement, this.context.currentTime, false);
+  }
+
+  private startSample(index: number, placement: Placement, now: number, repeating: boolean) {
+    const buffer = this.samples.get(index);
+    if (!buffer || !this.context || !this.output) return false;
     // Bound rapid multi-finger playing without clipping existing loop voices.
     if (this.sampleVoices.length >= 20) {
       const oldest = this.sampleVoices.shift()!;
@@ -108,17 +117,53 @@ export class ChordEngine {
     const volume = this.controls[instrument];
     gain.gain.value = volume * (0.58 + placement.tone.saturation * 0.18);
     source.connect(filter); filter.connect(gain); gain.connect(this.output);
-    const voice = { source, gain };
+    const voice: (typeof this.sampleVoices)[number] = { source, gain, index, repeating };
     this.sampleVoices.push(voice);
     this.trackSource(source, gain, now, () => {
       filter.disconnect();
+      if (voice.timer !== undefined) { window.clearTimeout(voice.timer); this.hitTimers.delete(voice.timer); }
       this.sampleVoices = this.sampleVoices.filter(item => item !== voice);
     });
     source.start(now);
+    const wait = (now - this.context.currentTime) * 1000;
+    if (wait < 5) this.onSampleHit?.(index);
+    else {
+      voice.timer = window.setTimeout(() => {
+        this.hitTimers.delete(voice.timer!); voice.timer = undefined;
+        this.onSampleHit?.(index);
+      }, wait);
+      this.hitTimers.add(voice.timer);
+    }
     return true;
   }
 
+  async toggleSampleLoop(index: number, placement: Placement, beats = 4, valid: () => boolean = () => true) {
+    if (this.sampleLoops.has(index)) { this.removeSampleLoop(index); return false; }
+    await this.unlock();
+    if (!valid() || !this.running || !this.samples.get(index)) return false;
+    // A second toggle may have arrived while Safari was resuming.
+    if (this.sampleLoops.has(index)) { this.removeSampleLoop(index); return false; }
+    this.sampleLoops.set(index, { placement, everySteps: Math.max(1, beats) * 2, startStep: Math.ceil(this.step / 2) * 2 });
+    this.schedule();
+    return true;
+  }
+
+  private removeSampleLoop(index: number) {
+    this.sampleLoops.delete(index);
+    const now = this.context?.currentTime ?? 0;
+    this.sampleVoices.filter(voice => voice.index === index && voice.repeating).forEach(voice => {
+      if (voice.timer !== undefined) { window.clearTimeout(voice.timer); this.hitTimers.delete(voice.timer); }
+      voice.gain.gain.setTargetAtTime(0.0001, now, 0.015);
+      try { voice.source.stop((this.sourceStarts.get(voice.source) ?? 0) >= now ? now : now + 0.08); } catch {}
+    });
+  }
+
+  clearSampleLoops() {
+    this.sampleLoopIndices.forEach(index => this.removeSampleLoop(index));
+  }
+
   stopSamples() {
+    this.clearSampleLoops();
     const now = this.context?.currentTime ?? 0;
     this.sampleVoices.forEach(({ source, gain }) => {
       gain.gain.setTargetAtTime(0.0001, now, 0.02);
@@ -140,7 +185,7 @@ export class ChordEngine {
   }
 
   schedule() {
-    if (!this.running || !this.placements.length) { this.nextStepTime = null; return; }
+    if (!this.running || (!this.placements.length && !this.hasSampleLoops)) { this.nextStepTime = null; return; }
     const now = this.context!.currentTime;
     // Never burst missed notes after a stalled tab or an audio interruption.
     if (this.nextStepTime === null || this.nextStepTime < now) this.nextStepTime = now + 0.02;
@@ -160,7 +205,7 @@ export class ChordEngine {
 
   async rebuildPlayback(placements: Placement[]) {
     const previous = this.context;
-    this.stop();
+    this.stop(0.12, true);
     if (previous) {
       previous.onstatechange = null;
       // Never wait for the broken context's close promise to unlock a new one.
@@ -249,7 +294,7 @@ export class ChordEngine {
     const wasEmpty = this.placements.length === 0;
     this.updatePlacements(placements);
     await this.unlock();
-    if (wasEmpty && this.placements.length) this.schedule();
+    if (wasEmpty && (this.placements.length || this.hasSampleLoops)) this.schedule();
   }
 
   updatePlacements(placements: Placement[]) {
@@ -416,7 +461,7 @@ export class ChordEngine {
   }
 
   pulse(atTime?: number): Instrument[] {
-    if (!this.placements.length || !this.running) return [];
+    if ((!this.placements.length && !this.hasSampleLoops) || !this.running) return [];
     this.scheduledTime = atTime ?? this.context!.currentTime;
     this.soundingPlacement = null;
     const hits = new Set<Instrument>();
@@ -426,6 +471,11 @@ export class ChordEngine {
     const beat = this.step % 8;
     const noteAt = (degree: number, register: number) =>
       hz(scaleNote(composition, degree) + this.controls.transpose + register);
+    this.sampleLoops.forEach((loop, index) => {
+      if (this.step >= loop.startStep && (this.step - loop.startStep) % loop.everySteps === 0) {
+        this.startSample(index, loop.placement, this.scheduledTime!, true);
+      }
+    });
     const groups = (instrument: Instrument) => this.placements.filter(p => p.instrument === instrument);
     const keys = groups('keys'), guitars = groups('guitar'), bass = groups('bass'), drums = groups('drums');
 
@@ -570,7 +620,9 @@ export class ChordEngine {
     return [...hits];
   }
 
-  stop(release = 0.12) {
+  stop(release = 0.12, preserveSampleLoops = false) {
+    if (preserveSampleLoops) this.sampleLoops.forEach(loop => { loop.startStep = this.step; });
+    else this.sampleLoops.clear();
     this.sampleVoices = [];
     this.placements = [];
     this.timbreBindings.clear();

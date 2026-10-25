@@ -1,5 +1,5 @@
 import type { Bounds } from './scene';
-import { PHOTO_PADS, PAD_KEYS, photoPadBounds } from './pads';
+import { photoPadBounds } from './pads';
 
 export type PadHit = { pad: number; started: number };
 export const PAD_EFFECT_SECONDS = 0.85;
@@ -31,23 +31,5 @@ export function drawPadHit(ctx: CanvasRenderingContext2D, image: CanvasImageSour
   }
   ctx.translate(-cx, -cy);
   ctx.drawImage(image, bounds.x, bounds.y, bounds.width, bounds.height);
-  ctx.restore();
-}
-
-/** Pad guides are editor controls: keep them out of the recording. */
-export function drawPadGuides(ctx: CanvasRenderingContext2D, bounds: Bounds, dpr = 1) {
-  ctx.save(); ctx.scale(dpr, dpr);
-  ctx.beginPath(); ctx.rect(bounds.x, bounds.y, bounds.width, bounds.height); ctx.clip();
-  for (let i = 0; i < PHOTO_PADS.length; i++) {
-    const cell = photoPadBounds(bounds, i);
-    ctx.strokeStyle = 'rgba(255,255,255,.13)'; ctx.lineWidth = 0.6;
-    ctx.strokeRect(cell.x, cell.y, cell.width, cell.height);
-    const size = Math.max(7, Math.min(10, cell.width / 10));
-    ctx.font = `500 ${size}px system-ui`; ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
-    ctx.shadowColor = '#000'; ctx.shadowBlur = 4;
-    ctx.fillStyle = 'rgba(255,255,255,.72)';
-    ctx.fillText(`${PAD_KEYS[i].toUpperCase()} · ${PHOTO_PADS[i].name}`, cell.x + 5,
-      cell.y + cell.height - 6, Math.max(1, cell.width - 10));
-  }
   ctx.restore();
 }
