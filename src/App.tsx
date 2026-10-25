@@ -333,7 +333,7 @@ export default function App() {
 
   return <main className="app">
     <header className="topbar">
-      <div><div className="eyebrow">IMAGE / MUSIC</div><h1>Make colors sing.</h1></div>
+      <div><div className="eyebrow">IMAGE / MUSIC</div><h1>Build a photo loop</h1></div>
       <label className="uploadButton">{hasImage ? '↗ Change photo' : '↗ Add photo'}
         <input type="file" accept="image/*" onChange={(e) => upload(e.target.files?.[0])} />
       </label>
@@ -342,7 +342,7 @@ export default function App() {
     <div className="instrument composer">
       <section className={`stage ${hasImage ? 'hasImage' : ''}`}>
         <div className="stageTop"><span><i /> COLOR IS YOUR INSTRUMENT</span><span>{String(placements.length).padStart(2, '0')} LOOPS</span></div>
-        {!hasImage && <label className="emptyState"><div className="orb"><span>＋</span></div><strong>Your photo.<br />Your sound.</strong><span>Turn a moment into something you can hear.</span><b className="emptyCta">Choose a photo ↗</b>
+        {!hasImage && <label className="emptyState"><div className="orb"><span>＋</span></div><strong>Choose a photo</strong><span>Place instruments onto its colors and textures.</span><b className="emptyCta">Choose a photo ↗</b>
           <input type="file" accept="image/*" onChange={(e) => upload(e.target.files?.[0])} /></label>}
         <canvas ref={canvasRef} className={`canvas placementCanvas ${mode === 'live' ? 'liveCanvas' : ''}`}
           onPointerDown={(e) => {
@@ -434,7 +434,7 @@ export default function App() {
     </nav>
     <section id="instrumentSheet" className={`controlSheet ${sheet ? 'isOpen' : ''}`} inert={!sheet} aria-hidden={!sheet}
       aria-labelledby="sheetTitle">
-      <div className="sheetContent controls" style={{ '--instrument-color': INSTRUMENTS.find(i => i.id === sheet)?.color || '#d5f78c' } as React.CSSProperties}>
+      <div className="sheetContent controls" style={{ '--instrument-color': INSTRUMENTS.find(i => i.id === sheet)?.color || '#f5f5f5' } as React.CSSProperties}>
         <button className="sheetHandle" aria-label="Collapse controls" onClick={() => setSheet(null)}
           onPointerDown={event => { sheetDragStart.current = event.clientY; event.currentTarget.setPointerCapture(event.pointerId); }}
           onPointerUp={event => { if (sheetDragStart.current !== null && event.clientY - sheetDragStart.current > 30) setSheet(null); sheetDragStart.current = null; }}
