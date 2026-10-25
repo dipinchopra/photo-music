@@ -1,4 +1,4 @@
-import { composeImage, melodyEvent, phraseStep, randomAt, scaleNote, type Composition } from './composition';
+import { composeImage, circleEvent, phraseStep, randomAt, scaleNote, type Composition } from './composition';
 
 export type Instrument = 'keys' | 'guitar' | 'bass' | 'drums';
 
@@ -59,8 +59,7 @@ export class ChordEngine {
   private activeGains: GainNode[] = [];
   private activeOscillators: OscillatorNode[] = [];
   private step = 0;
-  private lastKeyNote: number | null = null;
-  private lastKeyStep = -100;
+  private keyHistory = new Map<number, { pitch: number; step: number }>();
   private composition: Composition = composeImage([]);
   private variation = 0.5;
   onPlacementHit: ((id: number) => void) | null = null;
@@ -83,8 +82,7 @@ export class ChordEngine {
     this.composition = composition;
     this.variation = randomAt(composition.seed, 3);
     this.step = 0;
-    this.lastKeyNote = null;
-    this.lastKeyStep = -100;
+    this.keyHistory.clear();
     this.updateSpace();
   }
 
@@ -143,6 +141,8 @@ export class ChordEngine {
   async playPlacements(placements: Placement[]) {
     const wasEmpty = this.placements.length === 0;
     this.placements = placements;
+    const ids = new Set(placements.map(placement => placement.id));
+    this.keyHistory.forEach((_, id) => { if (!ids.has(id)) this.keyHistory.delete(id); });
     await this.unlock();
     if (wasEmpty && this.placements.length) this.pulse();
   }
@@ -280,55 +280,69 @@ export class ChordEngine {
       });
     }
 
-    const melody = melodyEvent(composition, this.step, this.controls.complexity);
-    if (keys.length && melody.active && this.controls.keys > 0 && this.step - this.lastKeyStep >= 3) {
-      // Circles take turns as one melodic voice instead of stacking attacks.
-      const placement = keys[melody.voice % keys.length];
+    // Independent phrases, with at most two attacks per instrument on one tick.
+    // Rotating priority keeps additional circles audible without a unison pile-up.
+    let keyAttacks = 0;
+    for (let voice = 0; voice < keys.length; voice++) {
+      const lane = (voice + Math.floor(this.step / 2)) % keys.length;
+      const placement = keys[lane];
+      const melody = circleEvent(composition, placement.tone, this.step, this.controls.complexity, lane);
+      const previous = this.keyHistory.get(placement.id);
+      if (!melody.active || !this.controls.keys || keyAttacks >= 2 || (previous && this.step - previous.step < 2)) continue;
       const phrase = phraseStep(composition, placement.tone, this.step, this.controls.complexity);
       const degree = beat % 4 === 0 ? root + [0, 2, 4][Math.abs(phrase.degree) % 3] : phrase.degree;
       const register = placement.tone.brightness > 0.68 ? 36 : 24;
       const pitch = scaleNote(composition, degree) + this.controls.transpose + register;
-      // Let a repeated pitch ring rather than striking it again immediately.
-      if (pitch !== this.lastKeyNote || this.step - this.lastKeyStep >= 8) {
-        hits.add('keys');
-        this.onPlacementHit?.(placement.id);
-        this.lastKeyNote = pitch;
-        this.lastKeyStep = this.step;
-        const secondsPerStep = 60 / this.controls.tempo / 2;
-        const duration = Math.max(0.6, melody.hold * secondsPerStep * (0.8 + this.controls.keysSustain * 0.5));
-        this.voice(hz(pitch), 0.07 * placement.level * this.controls.keys * melody.accent,
-          duration, this.controls.keysTone * 0.55 + placement.tone.saturation * 0.45,
-          0.025 + (1 - this.controls.keysTone) * 0.055, this.controls.keysDelay * 0.45);
-      }
+      if (previous?.pitch === pitch && this.step - previous.step < 4) continue;
+      hits.add('keys');
+      this.onPlacementHit?.(placement.id);
+      this.keyHistory.set(placement.id, { pitch, step: this.step });
+      keyAttacks++;
+      const secondsPerStep = 60 / this.controls.tempo / 2;
+      const duration = Math.max(0.35, melody.hold * secondsPerStep * (0.7 + this.controls.keysSustain * 0.4));
+      this.voice(hz(pitch), 0.085 * placement.level * this.controls.keys * melody.accent / Math.sqrt(Math.min(keys.length, 3)),
+        duration, this.controls.keysTone * 0.55 + placement.tone.saturation * 0.45,
+        0.02 + (1 - this.controls.keysTone) * 0.04, this.controls.keysDelay * 0.55);
     }
 
-    guitars.forEach((placement, index) => {
+    let guitarAttacks = 0;
+    for (let voice = 0; voice < guitars.length; voice++) {
+      const lane = (voice + Math.floor(this.step / 2)) % guitars.length;
+      const placement = guitars[lane];
+      const event = circleEvent(composition, placement.tone, this.step, this.controls.guitarStrum, lane);
+      if (!this.controls.guitar || !event.active || guitarAttacks >= 2) continue;
+      guitarAttacks++;
       const phrase = phraseStep(composition, placement.tone, this.step + 3, this.controls.complexity);
-      if (!this.controls.guitar || !melodyEvent(composition, this.step, this.controls.guitarStrum).active || index !== melody.voice % guitars.length) return;
       hits.add('guitar');
       this.onPlacementHit?.(placement.id);
-      const degrees = this.controls.guitarStrum > 0.58 ? [root, root + 2, root + 4] : [root + (Math.abs(phrase.degree) % 3) * 2];
+      const base = root + (Math.abs(phrase.degree) % 3) * 2;
+      const degrees = this.controls.guitarStrum > 0.58 ? [base, base + 2, base + 4] : [base];
       degrees.forEach((degree, index) => {
-        const volume = 0.065 * placement.level * this.controls.guitar * phrase.accent / Math.sqrt(guitars.length * degrees.length);
-        this.voice(noteAt(degree, 24), volume, 0.18 + this.controls.guitarStrum * 0.4,
+        const volume = 0.065 * placement.level * this.controls.guitar * event.accent / Math.sqrt(Math.min(guitars.length, 3) * degrees.length);
+        this.voice(noteAt(degree, 24), volume, 0.28 + this.controls.guitarStrum * 0.4,
           this.controls.guitarTone * 0.55 + placement.tone.saturation * 0.45,
           0.006 + index * 0.014, this.controls.guitarDelay, true);
       });
-    });
+    }
 
-    bass.forEach(placement => {
-      const phrase = phraseStep(composition, placement.tone, this.step, this.controls.bassMovement);
-      if (!this.controls.bass || !(beat === 0 || beat === 4 || (phrase.active && this.controls.bassMovement > 0.58))) return;
+    let bassAttacks = 0;
+    for (let voice = 0; voice < bass.length; voice++) {
+      const lane = (voice + Math.floor(this.step / 2)) % bass.length;
+      const placement = bass[lane];
+      const event = circleEvent(composition, placement.tone, this.step, this.controls.bassMovement, lane);
+      if (!this.controls.bass || !event.active || bassAttacks >= 1) continue;
+      bassAttacks++;
       hits.add('bass');
       this.onPlacementHit?.(placement.id);
       const nextRoot = composition.progression[(bar + 1) % composition.progression.length];
+      const colorDegree = [0, 2, 4][Math.min(2, Math.floor(placement.tone.hue / 120))];
       const degree = beat === 7 && this.controls.bassMovement > 0.58 ? nextRoot - 1
-        : root + (beat === 4 && this.controls.bassMovement > 0.32 ? 4 : 0);
+        : root + (beat === 0 && lane === 0 ? 0 : colorDegree);
       const register = this.controls.bassDepth > 0.66 ? 0 : 12;
-      this.tone(noteAt(degree, register), 0.12 * placement.level * this.controls.bass * phrase.accent / Math.sqrt(bass.length),
-        composition.style === 'pulse' ? 0.18 : beat % 4 === 0 ? 0.62 : 0.3,
-        composition.style === 'pulse' ? 'triangle' : 'sine', 350 + composition.energy * 1000, 0.012, this.controls.bassDelay);
-    });
+      this.tone(noteAt(degree, register), 0.12 * placement.level * this.controls.bass * event.accent,
+        composition.style === 'pulse' ? 0.2 : beat % 4 === 0 ? 0.62 : 0.38,
+        composition.style === 'pulse' ? 'triangle' : 'sine', 350 + placement.tone.texture * 400 + composition.energy * 600, 0.012, this.controls.bassDelay);
+    }
 
     drums.forEach((placement) => {
       const variation = Math.floor(randomAt(composition.seed, Math.floor(placement.tone.hue) + 70) * 3);
@@ -376,8 +390,7 @@ export class ChordEngine {
 
   stop(release = 0.12) {
     this.placements = [];
-    this.lastKeyNote = null;
-    this.lastKeyStep = -100;
+    this.keyHistory.clear();
     if (!this.context) return;
     const now = this.context.currentTime;
     this.activeGains.forEach((gain) => {

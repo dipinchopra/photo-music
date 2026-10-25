@@ -93,25 +93,37 @@ test('image palettes produce different oscillator spectra and groove timing', as
 });
 
 
-test('many keyboard circles take turns instead of multiplying attacks', async () => {
-  const attacks = [];
-  for (const count of [1, 8]) {
-    const engine = new ChordEngine();
-    engine.setComposition({ ...composeImage([cell]), style: 'plucked' });
-    const notes = Array.from({ length: count }, (_, i) => ({ ...placement, id: i + 1, tone: { ...cell, hue: 30 + i * 40 } }));
-    await engine.playPlacements(notes);
-    const context = Context.instances.at(-1);
-    let previous = context.oscillators.length;
-    const steps = [0];
-    for (let step = 1; step < 32; step++) {
-      engine.pulse();
-      if (context.oscillators.length > previous) steps.push(step);
-      previous = context.oscillators.length;
+test('additional circles contribute independent notes while simultaneous attacks stay bounded', async () => {
+  for (const instrument of ['keys', 'guitar', 'bass']) {
+    const totals = [];
+    for (const count of [1, 8]) {
+      const engine = new ChordEngine();
+      engine.setComposition({ ...composeImage([cell]), style: 'plucked' });
+      const played = new Set();
+      let attacks = 0, tickAttacks = 0;
+      engine.onPlacementHit = id => { played.add(id); attacks++; tickAttacks++; };
+      const notes = Array.from({ length: count }, (_, i) => ({ ...placement, instrument, id: i + 1, tone: { ...cell, hue: 30 + i * 40 } }));
+      await engine.playPlacements(notes);
+      for (let step = 1; step < 128; step++) {
+        tickAttacks = 0;
+        engine.pulse();
+        assert.ok(tickAttacks <= (instrument === 'bass' ? 1 : 2));
+      }
+      assert.equal(played.size, count, `${instrument}: every circle must be heard`);
+      totals.push(attacks);
     }
-    assert.ok(steps.length <= 6, `too many attacks: ${steps}`);
-    for (let i = 1; i < steps.length; i++) assert.ok(steps[i] - steps[i - 1] >= 3);
-    assert.ok(steps.at(-1) <= 26, 'leave the end of the phrase quiet');
-    attacks.push(context.oscillators.length);
+    assert.ok(totals[1] > totals[0], `${instrument}: more circles must add musical activity`);
   }
-  assert.ok(attacks[1] <= 12, 'adding circles must not create stacked keyboard voices');
+});
+
+test('keyboard notes retain a short gap per circle without the old long silences', async () => {
+  const engine = new ChordEngine();
+  engine.setComposition({ ...composeImage([cell]), style: 'plucked' });
+  const steps = [];
+  let step = 0;
+  engine.onPlacementHit = () => steps.push(step);
+  await engine.playPlacements([placement]);
+  for (step = 1; step < 128; step++) engine.pulse();
+  assert.ok(steps.length >= 20, 'one circle should have a moderate musical pace');
+  for (let i = 1; i < steps.length; i++) assert.ok(steps[i] - steps[i - 1] >= 2);
 });

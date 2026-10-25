@@ -52,7 +52,7 @@ test('contrasting photo features select four audible palettes and different temp
   ].map(cell => composeImage(Array(16).fill(cell)));
   assert.deepEqual(photos.map(p => p.style), ['ambient', 'glass', 'plucked', 'pulse']);
   assert.equal(new Set(photos.map(p => p.tempo)).size, 4);
-  assert.ok(photos[3].tempo - photos[0].tempo > 50);
+  assert.ok(photos[3].tempo - photos[0].tempo > 40);
   assert.ok(photos[2].swing > photos[0].swing);
 });
 
@@ -64,8 +64,8 @@ test('lead phrases guarantee breathing space across images and variation levels'
         const composition = { ...composeImage(bright), style, seed };
         const onsets = Array.from({ length: 128 }, (_, step) => step)
           .filter(step => melodyEvent(composition, step, complexity).active);
-        assert.ok(onsets.length <= 24);
-        for (let i = 1; i < onsets.length; i++) assert.ok(onsets[i] - onsets[i - 1] >= 3);
+        assert.ok(onsets.length <= 36);
+        for (let i = 1; i < onsets.length; i++) assert.ok(onsets[i] - onsets[i - 1] >= 2);
         assert.ok(onsets.every(step => step % 32 <= 26));
       }
     }

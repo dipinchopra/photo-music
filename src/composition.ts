@@ -40,7 +40,7 @@ export function composeImage(cells: ImageTone[]): Composition {
   const style = saturation > 0.58 && energy > 0.42 ? 'pulse'
     : brightness < 0.34 || (saturation < 0.22 && energy < 0.3) ? 'ambient'
     : brightness > 0.64 ? 'glass' : 'plucked';
-  const tempos = { ambient: 64, glass: 90, plucked: 106, pulse: 128 };
+  const tempos = { ambient: 78, glass: 96, plucked: 108, pulse: 124 };
   return {
     style, tempo: tempos[style] + Math.round(energy * 16),
     swing: style === 'plucked' ? 0.2 : style === 'glass' ? 0.09 : 0,
@@ -72,22 +72,21 @@ export function phraseStep(composition: Composition, tone: ImageTone, step: numb
   return { active, degree, accent: beat % 2 === 0 ? 1 : 0.65 + randomAt(seed, slot + 40) * 0.2 };
 }
 
-// A shared lead phrase prevents every circle from hammering its own rhythm.
-// Each four-bar phrase ends with space; higher variation adds passing notes.
+// Moderate phrases with room at the end; individual circles offset this rhythm.
 export function melodyEvent(composition: Composition, step: number, complexity: number) {
   const phrase = Math.floor(step / 32);
   const slot = step % 32;
   const patterns = [
-    [0, 6, 12, 19, 24],
-    [0, 4, 11, 18, 25],
-    [0, 7, 14, 20, 25],
-    [0, 5, 12, 21, 26],
+    [0, 3, 7, 10, 14, 18, 22, 26],
+    [0, 4, 7, 11, 14, 18, 23, 26],
+    [0, 3, 6, 10, 14, 19, 22, 26],
+    [0, 4, 8, 11, 15, 18, 22, 26],
   ];
   const pattern = patterns[Math.floor(randomAt(composition.seed, phrase + 120) * patterns.length)];
   let onsets = composition.style === 'ambient' ? pattern.filter((_, i) => i % 2 === 0) : [...pattern];
   if (complexity > 0.75 && composition.style !== 'ambient') {
-    const passing = onsets.find((onset, i) => i < onsets.length - 1 && onsets[i + 1] - onset >= 7);
-    if (passing !== undefined) onsets = [...onsets, passing + 3].sort((a, b) => a - b);
+    const passing = onsets.find((onset, i) => i < onsets.length - 1 && onsets[i + 1] - onset >= 5);
+    if (passing !== undefined) onsets = [...onsets, passing + 2].sort((a, b) => a - b);
   }
   const index = onsets.indexOf(slot);
   const next = index >= 0 ? onsets[index + 1] ?? 29 : slot;
@@ -97,4 +96,12 @@ export function melodyEvent(composition: Composition, step: number, complexity: 
     hold: Math.max(1, Math.min(6, next - slot - 1)),
     accent: index === 0 ? 0.82 : index === onsets.length - 1 ? 0.58 : 0.66,
   };
+}
+
+
+/** Each placed circle gets a stable musical lane, even on similar colors. */
+export function circleEvent(composition: Composition, tone: ImageTone, step: number, complexity: number, lane: number) {
+  const seed = composition.seed ^ Math.round(tone.hue * 127 + tone.texture * 4093 + tone.brightness * 8191);
+  const offset = lane === 0 ? 0 : (lane * 3 + Math.floor(tone.hue / 90)) % 8;
+  return melodyEvent({ ...composition, seed }, step + offset, complexity);
 }
