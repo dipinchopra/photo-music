@@ -30,10 +30,7 @@ export function visualOutline(placement: Placement, mode: VisualMode, time = 0):
       const edge = 1 + Math.sin(angle * 3 + id) * 0.14 + Math.cos(angle * 5 - id) * 0.06;
       px *= edge; py *= edge * 0.83;
     } else if (mode === 'shapes') {
-      if (placement.instrument === 'keys') {
-        px = Math.sign(px) * Math.pow(Math.abs(px), 0.48) * 0.9;
-        py = Math.sign(py) * Math.pow(Math.abs(py), 0.48) * 0.78;
-      } else if (placement.instrument === 'guitar') {
+      if (placement.instrument === 'guitar') {
         px *= 1.2; py *= Math.abs(py) * 0.7;
       } else if (placement.instrument === 'bass') {
         px *= 1.35; py *= 0.62;
