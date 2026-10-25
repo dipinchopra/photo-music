@@ -1,0 +1,158 @@
+import type { Placement } from './music';
+import type { Bounds } from './scene';
+
+export type VisualMode = 'living' | 'fragments' | 'ribbons' | 'shapes';
+export const VISUAL_MODES: { id: VisualMode; label: string; description: string }[] = [
+  { id: 'living', label: 'Living photo', description: 'Soft refraction blends into the photograph. Editing handles stay out of recordings.' },
+  { id: 'fragments', label: 'Floating fragments', description: 'Organic pieces of the photo lift and drift together.' },
+  { id: 'ribbons', label: 'Photo ribbons', description: 'Strips of the image bend into flowing, layered ribbons.' },
+  { id: 'shapes', label: 'Instrument shapes', description: 'Keys: rounded tiles. Guitar: leaves. Bass: ovals. Drums: diamonds.' },
+];
+export type Point = { x: number; y: number };
+
+/** This same outline drives drawing, hit testing, and rim removal. */
+export function visualOutline(placement: Placement, mode: VisualMode, time = 0): Point[] {
+  const { x, y, radius: r, id } = placement;
+  if (mode === 'ribbons') {
+    const edge = (u: number, sign: number) => ({ x: x + (u * 2 - 1) * r * 1.45,
+      y: y + Math.sin(u * Math.PI * 1.8 + id * 0.7 + time * 0.25) * r * 0.3
+        + sign * r * (0.14 + Math.sin(u * Math.PI) * 0.09) });
+    return [...Array.from({ length: 33 }, (_, i) => edge(i / 32, -1)),
+      ...Array.from({ length: 33 }, (_, i) => edge(1 - i / 32, 1))];
+  }
+  if (mode === 'shapes' && placement.instrument === 'drums') {
+    return [{ x, y: y - r }, { x: x + r, y }, { x, y: y + r }, { x: x - r, y }];
+  }
+  return Array.from({ length: 80 }, (_, i) => {
+    const angle = i / 80 * Math.PI * 2;
+    let px = Math.cos(angle), py = Math.sin(angle);
+    if (mode === 'fragments') {
+      const edge = 1 + Math.sin(angle * 3 + id) * 0.14 + Math.cos(angle * 5 - id) * 0.06;
+      px *= edge; py *= edge * 0.83;
+    } else if (mode === 'shapes') {
+      if (placement.instrument === 'keys') {
+        px = Math.sign(px) * Math.pow(Math.abs(px), 0.48) * 0.9;
+        py = Math.sign(py) * Math.pow(Math.abs(py), 0.48) * 0.78;
+      } else if (placement.instrument === 'guitar') {
+        px *= 1.2; py *= Math.abs(py) * 0.7;
+      } else if (placement.instrument === 'bass') {
+        px *= 1.35; py *= 0.62;
+      }
+    }
+    return { x: x + px * r, y: y + py * r };
+  });
+}
+
+export function traceOutline(ctx: CanvasRenderingContext2D, points: Point[]) {
+  ctx.beginPath();
+  points.forEach((point, i) => i ? ctx.lineTo(point.x, point.y) : ctx.moveTo(point.x, point.y));
+  ctx.closePath();
+}
+
+function edgeDistance(points: Point[], x: number, y: number) {
+  return Math.min(...points.map((point, i) => {
+    const next = points[(i + 1) % points.length];
+    const dx = next.x - point.x, dy = next.y - point.y;
+    const t = Math.max(0, Math.min(1, ((x - point.x) * dx + (y - point.y) * dy) / Math.max(0.0001, dx * dx + dy * dy)));
+    return Math.hypot(x - point.x - t * dx, y - point.y - t * dy);
+  }));
+}
+
+export function hitVisual(placement: Placement, mode: VisualMode, x: number, y: number, time = 0) {
+  if (mode === 'living' && Math.hypot(x - placement.x, y - placement.y) <= 14) return true;
+  const points = visualOutline(placement, mode, time);
+  let inside = false;
+  for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+    const a = points[i], b = points[j];
+    if ((a.y > y) !== (b.y > y) && x < (b.x - a.x) * (y - a.y) / (b.y - a.y) + a.x) inside = !inside;
+  }
+  return inside || edgeDistance(points, x, y) <= 5;
+}
+
+export function visualTapAction(placement: Placement, mode: VisualMode, x: number, y: number, time = 0): 'place' | 'remove' {
+  if (mode === 'living') return Math.hypot(x - placement.x, y - placement.y) <= 14 ? 'remove' : 'place';
+  const rim = mode === 'ribbons' ? Math.min(4, placement.radius * 0.08) : Math.min(10, placement.radius * 0.22);
+  return edgeDistance(visualOutline(placement, mode, time), x, y) <= rim ? 'remove' : 'place';
+}
+
+function drawPhoto(ctx: CanvasRenderingContext2D, image: HTMLImageElement, bounds: Bounds,
+  placement: Placement, zoom: number, offsetX = 0, offsetY = 0) {
+  ctx.save();
+  ctx.translate(placement.x, placement.y);
+  ctx.scale(zoom, zoom);
+  ctx.translate(-placement.x + offsetX, -placement.y + offsetY);
+  ctx.drawImage(image, bounds.x, bounds.y, bounds.width, bounds.height);
+  ctx.restore();
+}
+
+export function drawVisual(ctx: CanvasRenderingContext2D, image: HTMLImageElement, bounds: Bounds,
+  placement: Placement, mode: VisualMode, time: number, hit: number, color: string, dpr = 1) {
+  ctx.save();
+  ctx.scale(dpr, dpr);
+  ctx.beginPath(); ctx.rect(bounds.x, bounds.y, bounds.width, bounds.height); ctx.clip();
+  const { x, y, radius: r, id } = placement;
+  if (mode === 'living') {
+    // Feathered concentric bands make a continuous, frameless distortion field.
+    for (let band = 0; band < 18; band++) {
+      const edge = 1 - band / 18;
+      const inner = Math.max(0, edge - 1 / 18);
+      ctx.save();
+      ctx.beginPath(); ctx.arc(x, y, r * edge, 0, Math.PI * 2);
+      if (inner) ctx.arc(x, y, r * inner, 0, Math.PI * 2, true);
+      ctx.clip('evenodd');
+      const influence = Math.pow(1 - edge, 1.4);
+      ctx.globalAlpha = Math.min(1, influence * 1.5);
+      const flow = Math.sin(time * 0.55 + id * 1.3);
+      drawPhoto(ctx, image, bounds, placement, 1 + influence * (0.12 + hit * 0.015),
+        flow * r * 0.12 * influence, Math.cos(time * 0.43 + id) * r * 0.08 * influence);
+      ctx.restore();
+    }
+  } else {
+    const outline = visualOutline(placement, mode, time);
+    ctx.save();
+    traceOutline(ctx, outline);
+    ctx.fillStyle = 'rgba(0,0,0,.16)';
+    ctx.shadowColor = 'rgba(0,0,0,.4)';
+    ctx.shadowBlur = (mode === 'fragments' ? 14 : 7) * dpr;
+    ctx.shadowOffsetY = (mode === 'fragments' ? 6 : 3) * dpr;
+    ctx.fill(); ctx.restore();
+    ctx.save(); traceOutline(ctx, outline); ctx.clip();
+    if (mode === 'ribbons') {
+      // Adjacent strips displace the image along the ribbon's curved centerline.
+      for (let strip = 0; strip < 64; strip++) {
+        const u = (strip + 0.5) / 64;
+        ctx.save(); ctx.beginPath();
+        ctx.rect(x + (strip / 64 * 2 - 1) * r * 1.45, y - r, r * 2.9 / 64 + 0.5, r * 2);
+        ctx.clip();
+        drawPhoto(ctx, image, bounds, placement, 1.04,
+          0, Math.sin(u * Math.PI * 1.8 + id * 0.7 + time * 0.25) * r * 0.13);
+        ctx.restore();
+      }
+    } else drawPhoto(ctx, image, bounds, placement, mode === 'fragments' ? 1.09 : 1.06, r * 0.025, r * 0.02);
+    const sheen = ctx.createLinearGradient(x - r, y - r, x + r, y + r);
+    sheen.addColorStop(0, 'rgba(255,255,255,.22)');
+    sheen.addColorStop(0.35, 'rgba(255,255,255,0)');
+    sheen.addColorStop(1, 'rgba(255,255,255,.06)');
+    ctx.fillStyle = sheen; ctx.fillRect(x - r * 1.6, y - r * 1.2, r * 3.2, r * 2.4);
+    ctx.restore();
+    traceOutline(ctx, outline);
+    ctx.lineWidth = mode === 'shapes' ? 1.5 : 1;
+    ctx.strokeStyle = mode === 'shapes' ? color : 'rgba(255,255,255,.38)';
+    ctx.globalAlpha = mode === 'shapes' ? 0.55 + hit * 0.12 : 1;
+    ctx.stroke();
+    // A small note glint, never a whole-image flash.
+    ctx.globalAlpha = hit * 0.45; ctx.lineWidth = 2; ctx.strokeStyle = color;
+    ctx.beginPath();
+    outline.slice(0, Math.max(2, Math.floor(outline.length * 0.16))).forEach((point, i) => i ? ctx.lineTo(point.x, point.y) : ctx.moveTo(point.x, point.y));
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/** Editing targets are drawn after the recording frame has been copied. */
+export function drawLivingHandle(ctx: CanvasRenderingContext2D, placement: Placement, color: string, dpr: number) {
+  ctx.save(); ctx.translate(placement.x * dpr, placement.y * dpr);
+  ctx.strokeStyle = color; ctx.lineWidth = dpr; ctx.globalAlpha = 0.65;
+  ctx.beginPath(); ctx.moveTo(-4 * dpr, 0); ctx.lineTo(4 * dpr, 0); ctx.moveTo(0, -4 * dpr); ctx.lineTo(0, 4 * dpr); ctx.stroke();
+  ctx.restore();
+}

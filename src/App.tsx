@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { sampleAverageColor } from './color';
 import { composeImage, type ArpMode } from './composition';
-import { photoBounds, recordingSize, moveCircle, circleTapAction, type Motion } from './scene';
-import { refractPhoto, drawGlassRim } from './glass';
+import { photoBounds, recordingSize, moveCircle, type Motion } from './scene';
+import { drawVisual, drawLivingHandle, hitVisual, visualTapAction, VISUAL_MODES, type VisualMode } from './visuals';
 import { ChordEngine, type Instrument, type Placement } from './music';
 
 const music = new ChordEngine();
@@ -38,7 +38,6 @@ function Arpeggiator({ mode, rate, onMode, onRate }: {
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
-  const shadeCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const toneCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const placementsRef = useRef<Placement[]>([]);
   const livePlacementsRef = useRef(new Map<number, Placement>());
@@ -51,9 +50,9 @@ export default function App() {
   const nextIdRef = useRef(1);
 
   const sheetDragStart = useRef<number | null>(null);
-  const [sheet, setSheet] = useState<Instrument | 'mix' | 'motion' | null>(null);
-  const openSheet = (value: Instrument | 'mix' | 'motion') => {
-    if (value !== 'mix' && value !== 'motion') {
+  const [sheet, setSheet] = useState<Instrument | 'mix' | 'motion' | 'visuals' | null>(null);
+  const openSheet = (value: Instrument | 'mix' | 'motion' | 'visuals') => {
+    if (value !== 'mix' && value !== 'motion' && value !== 'visuals') {
       setSelected(value);
     }
     setSheet(current => current === value ? null : value);
@@ -82,6 +81,9 @@ export default function App() {
     bass: 68, bassDepth: 70, bassMovement: 45, bassDelay: 0,
     drums: 60, drumPunch: 70, drumDensity: 50, drumDelay: 0,
   });
+
+  const [visualMode, setVisualMode] = useState<VisualMode>('living');
+  const visualModeRef = useRef<VisualMode>('living');
 
   const [motion, setMotion] = useState<Motion>('off');
   const motionRef = useRef<Motion>('off');
@@ -205,38 +207,11 @@ export default function App() {
 
     const drawnPlacements = [...scenePlacements(), ...livePlacementsRef.current.values()];
 
+    const visualTime = motionRef.current === 'off' ? 0 : motionSecondsRef.current;
     drawnPlacements.forEach(placement => {
-      refractPhoto(ctx, image, { x: dx, y: dy, width: dw, height: dh },
-        placement.x * dpr, placement.y * dpr, placement.radius * dpr);
-    });
-
-    if (drawnPlacements.length) {
-      const shade = shadeCanvasRef.current ?? document.createElement('canvas');
-      shadeCanvasRef.current = shade;
-      if (shade.width !== width || shade.height !== height) { shade.width = width; shade.height = height; }
-      const mask = shade.getContext('2d');
-      if (mask) {
-        mask.clearRect(0, 0, width, height);
-        mask.globalCompositeOperation = 'source-over';
-        mask.fillStyle = 'rgba(0,0,0,.16)';
-        mask.fillRect(0, 0, width, height);
-        mask.globalCompositeOperation = 'destination-out';
-        mask.fillStyle = '#000';
-        drawnPlacements.forEach(placement => {
-          mask.beginPath(); mask.arc(placement.x * dpr, placement.y * dpr, placement.radius * dpr, 0, Math.PI * 2); mask.fill();
-        });
-        mask.globalCompositeOperation = 'source-over';
-        ctx.drawImage(shade, 0, 0);
-      }
-    }
-
-    drawnPlacements.forEach((placement) => {
-      const config = INSTRUMENTS.find((item) => item.id === placement.instrument)!;
-      const x = placement.x * dpr;
-      const y = placement.y * dpr;
-      const r = placement.radius * dpr;
-      drawGlassRim(ctx, x, y, r, config.color, dpr,
-        visualHitsRef.current.get(placement.id) ?? 0);
+      const color = INSTRUMENTS.find(item => item.id === placement.instrument)!.color;
+      drawVisual(ctx, image, { x: dx / dpr, y: dy / dpr, width: dw / dpr, height: dh / dpr },
+        placement, visualModeRef.current, visualTime, visualHitsRef.current.get(placement.id) ?? 0, color, dpr);
     });
     const cropped = recordingCanvasRef.current;
     const recordingContext = cropped?.getContext('2d');
@@ -244,7 +219,9 @@ export default function App() {
       // Copy only the photo rectangle, including all rendered lenses and glints.
       recordingContext.drawImage(canvas, dx, dy, dw, dh, 0, 0, cropped.width, cropped.height);
     }
-
+    if (visualModeRef.current === 'living') drawnPlacements.forEach(placement => {
+      drawLivingHandle(ctx, placement, INSTRUMENTS.find(item => item.id === placement.instrument)!.color, dpr);
+    });
   };
 
   const sampleScene = (detailed = true) => {
@@ -462,13 +439,13 @@ export default function App() {
     };
   }, []);
 
-  const updatePlacements = (next: Placement[]) => {
+  const updatePlacements = (next: Placement[], release = 0.12) => {
     placementsRef.current = next;
     const ids = new Set(next.map(placement => placement.id));
     motionStartsRef.current.forEach((_, id) => { if (!ids.has(id)) motionStartsRef.current.delete(id); });
     setPlacements(next);
-    void music.playPlacements(next);
-    if (!next.length) { stopBeat(); music.stop(); }
+    if (!next.length) { stopBeat(); music.stop(release); }
+    else void music.playPlacements(next);
   };
 
   const upload = (file?: File) => {
@@ -543,14 +520,14 @@ export default function App() {
             }
             const point = canvasPoint(e.clientX, e.clientY);
             const hit = [...scenePlacements()].reverse().find((placement) =>
-              Math.hypot(point.x - placement.x, point.y - placement.y) <= placement.radius);
+              hitVisual(placement, visualModeRef.current, point.x, point.y, motionRef.current === 'off' ? 0 : motionSecondsRef.current));
             if (hit) {
               placementsRef.current = placementsRef.current.map(placement => placement.id === hit.id ? hit : placement);
               e.currentTarget.setPointerCapture(e.pointerId);
               dragRef.current = {
                 id: hit.id, offsetX: point.x - hit.x, offsetY: point.y - hit.y,
                 startX: e.clientX, startY: e.clientY, moved: false,
-                tapAction: circleTapAction(hit, point.x, point.y),
+                tapAction: visualTapAction(hit, visualModeRef.current, point.x, point.y, motionRef.current === 'off' ? 0 : motionSecondsRef.current),
               };
             } else pointerStartRef.current = { x: e.clientX, y: e.clientY };
           }}
@@ -611,11 +588,11 @@ export default function App() {
       </div>
       <div className="placementActions">
         <button aria-label="Undo last loop" disabled={!placements.length} onClick={() => updatePlacements(placementsRef.current.slice(0, -1))}>↶ <span>Undo</span></button>
-        <button disabled={!placements.length} onClick={() => updatePlacements([])}>Clear</button>
+        <button disabled={!placements.length} onClick={() => { livePlacementsRef.current.clear(); updatePlacements([], 0.9); }}>Clear</button>
       </div>
     </section>
     <div className={`dockRegion ${sheet ? 'sheetExpanded' : ''}`}>
-    <nav className="instrumentDock" aria-label="Instruments, motion and mix">
+    <nav className="instrumentDock" aria-label="Instruments, visuals, motion and mix">
       {INSTRUMENTS.map((instrument, index) => <button key={instrument.id}
         style={{ '--instrument-color': instrument.color } as React.CSSProperties}
         className={selected === instrument.id ? 'active' : ''}
@@ -627,6 +604,9 @@ export default function App() {
         <span className="instrumentGlyph" aria-hidden="true">{['▥', '≋', '⌁', '⠿'][index]}</span>
         <span>{['Keys', 'Guitar', 'Bass', 'Drums'][index]}</span><i />
       </button>)}
+      <button className={`visualsButton ${sheet === 'visuals' ? 'active' : ''}`} aria-controls="instrumentSheet" aria-expanded={sheet === 'visuals'} onClick={() => openSheet('visuals')}>
+        <span className="instrumentGlyph" aria-hidden="true">◈</span><span>Visuals</span>
+      </button>
       <button className={`motionButton ${sheet === 'motion' ? 'active' : ''}`} aria-label={`Motion controls, ${motion}`}
         aria-controls="instrumentSheet" aria-expanded={sheet === 'motion'} onClick={() => openSheet('motion')}>
         <span className="instrumentGlyph" aria-hidden="true">∿</span><span>Motion</span>{motion !== 'off' && <i />}
@@ -640,7 +620,14 @@ export default function App() {
           onPointerDown={event => { sheetDragStart.current = event.clientY; event.currentTarget.setPointerCapture(event.pointerId); }}
           onPointerUp={event => { if (sheetDragStart.current !== null && event.clientY - sheetDragStart.current > 30) setSheet(null); sheetDragStart.current = null; }}
           onPointerCancel={() => { sheetDragStart.current = null; }}><span /></button>
-        <header className="sheetHeader"><div><h2 id="sheetTitle">{sheet === 'mix' ? 'The mix' : sheet === 'motion' ? 'Motion' : INSTRUMENTS.find(i => i.id === sheet)?.label}</h2></div><button onClick={() => setSheet(null)} aria-label="Close controls">✕</button></header>
+        <header className="sheetHeader"><div><h2 id="sheetTitle">{sheet === 'mix' ? 'The mix' : sheet === 'motion' ? 'Motion' : sheet === 'visuals' ? 'Visuals' : INSTRUMENTS.find(i => i.id === sheet)?.label}</h2></div><button onClick={() => setSheet(null)} aria-label="Close controls">✕</button></header>
+        {sheet === 'visuals' && <div className="visualChoices">
+          {VISUAL_MODES.map(visual => <button key={visual.id} aria-pressed={visualMode === visual.id}
+            className={visualMode === visual.id ? 'selected' : ''} onClick={() => { visualModeRef.current = visual.id; setVisualMode(visual.id); }}>
+            <strong>{visual.label}</strong><small>{visual.description}</small>
+          </button>)}
+          <small>Switch styles on the same performance. Sound, sampling and motion stay unchanged.</small>
+        </div>}
         {sheet === 'motion' && <div className="motionControls">
       <div className="modePicker">
         {(['off', 'breathe', 'sway'] as const).map(value => <button key={value} disabled={!hasImage}
@@ -696,7 +683,7 @@ export default function App() {
           <label><span>Space <output>{controls.space}%</output></span><small>Adds echo and atmospheric depth.</small>
             <Slider value={controls.space} onChange={(value) => setControl('space', value)} /></label></div>}
 
-        {sheet === 'mix' && <label className="sizeControl"><span>Circle size <output>{Math.round(radius)}px</output></span><Slider min={28} max={90} value={radius} onChange={setRadius} /><small>Tap inside to layer. Tap a rim to remove. Drag to move.</small></label>}
+        {sheet === 'mix' && <label className="sizeControl"><span>Circle size <output>{Math.round(radius)}px</output></span><Slider min={28} max={90} value={radius} onChange={setRadius} /><small>{visualMode === 'living' ? 'Tap the photo to layer. Tap a small handle to remove. Drag to move.' : 'Tap inside to layer. Tap an edge to remove. Drag to move.'}</small></label>}
       </div>
     </section>
     </div>

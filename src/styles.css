@@ -498,3 +498,11 @@ html, body, #root, .app, .app * {
   .instrumentDock button { flex-basis: 86px; padding: 9px 10px; font-size: 11px; gap: 7px; }
   .instrumentDock .instrumentGlyph { font-size: 20px; }
 }
+
+.visualsButton.active { --instrument-color: #f5f5f5; }
+.visualChoices { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.visualChoices > button { display: flex; flex-direction: column; gap: 6px; padding: 12px; text-align: left; border: 1px solid #ffffff15; border-radius: 12px; background: #ffffff03; color: #aaa; }
+.visualChoices > button.selected { color: #fff; border-color: #ffffff70; background: #ffffff0a; }
+.visualChoices strong { font-size: 12px; font-weight: 500; }
+.visualChoices small { font-size: 10px; line-height: 1.5; color: #aaa; }
+.visualChoices > small { grid-column: 1 / -1; }

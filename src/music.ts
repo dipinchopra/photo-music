@@ -509,15 +509,16 @@ export class ChordEngine {
     if (!this.context) return;
     const now = this.noteTime;
     this.activeGains.forEach((gain) => {
-      gain.gain.cancelScheduledValues(now);
-      gain.gain.setTargetAtTime(0.0001, now, 0.025);
+      if (typeof gain.gain.cancelAndHoldAtTime === 'function') gain.gain.cancelAndHoldAtTime(now);
+      else gain.gain.cancelScheduledValues(now);
+      gain.gain.setTargetAtTime(0.0001, now, Math.max(0.01, release / 4));
     });
     const sources = [...this.activeSources];
     this.activeSources = [];
     this.activeGains = [];
     // Cancel future drum and melody attacks as well as releasing sounding notes.
     sources.forEach(source => {
-      try { source.stop((this.sourceStarts.get(source) ?? 0) >= now ? now : now + Math.min(release, 0.025)); } catch {}
+      try { source.stop((this.sourceStarts.get(source) ?? 0) >= now ? now : now + Math.max(release, 0.025)); } catch {}
     });
   }
 }

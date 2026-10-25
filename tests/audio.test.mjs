@@ -11,7 +11,8 @@ const { composeImage } = await import(compositionUrl);
 class Param {
   value = 0;
   setValueAtTime(v) { this.value = v; }
-  setTargetAtTime(v) { this.value = v; }
+  setTargetAtTime(v, time, constant) { this.value = v; this.target = { v, time, constant }; }
+  cancelAndHoldAtTime(time) { this.heldAt = time; }
   exponentialRampToValueAtTime(v) { this.value = v; }
   cancelScheduledValues() {}
 }
@@ -27,9 +28,9 @@ class Node {
 class Context {
   static instances = [];
   state = 'running'; currentTime = 0; sampleRate = 8000; destination = new Node();
-  oscillators = []; filters = []; resumeCalls = 0;
+  oscillators = []; filters = []; gains = []; resumeCalls = 0;
   constructor() { Context.instances.push(this); }
-  createGain() { return new Node(); }
+  createGain() { const node = new Node(); this.gains.push(node); return node; }
   createDelay() { this.delay = new Node(); return this.delay; }
   createDynamicsCompressor() { return new Node(); }
   createMediaStreamDestination() { return { ...new Node(), stream: {} }; }
@@ -232,4 +233,18 @@ test('new image samples continuously change ringing voices without retriggering 
   assert.equal(context.oscillators.length, count, 'do not add extra attacks during continuous sampling');
   engine.updatePlacements([{ ...placement, tone: { ...cell, brightness: 0.05, saturation: 0.1 } }]);
   assert.ok(context.filters[0].frequency.value < cutoff);
+});
+
+
+test('Clear releases sounding voices over 0.9 seconds instead of cutting them off', async () => {
+  const engine = new ChordEngine();
+  engine.setComposition({ ...composeImage([cell]), style: 'plucked' });
+  await engine.playPlacements([placement]);
+  const context = Context.instances.at(-1);
+  context.currentTime = 0.1;
+  engine.stop(0.9);
+  assert.ok(context.oscillators.every(node => node.stopTime === 1));
+  const envelopes = context.gains.filter(node => node.gain.heldAt === 0.1);
+  assert.ok(envelopes.length > 0);
+  assert.ok(envelopes.every(node => node.gain.target.constant === 0.225));
 });
