@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { sampleAverageColor } from './color';
+import { refractPhoto, drawGlassRim } from './glass';
 import { ChordEngine, type Instrument, type Placement } from './music';
 
 const music = new ChordEngine();
@@ -23,9 +24,11 @@ export default function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const placementsRef = useRef<Placement[]>([]);
-  const livePlacementRef = useRef<Placement | null>(null);
+  const livePlacementsRef = useRef(new Map<number, Placement>());
   const beatRef = useRef<number | null>(null);
   const tempoRef = useRef(96);
+  const beatProgressRef = useRef(0);
+  const beatTimeRef = useRef(0);
   const pulseRef = useRef(0);
   const visualHitsRef = useRef<Record<Instrument, number>>({ keys: 0, guitar: 0, bass: 0, drums: 0 });
   const phaseRef = useRef(0);
@@ -63,6 +66,69 @@ export default function App() {
     drums: 60, drumPunch: 70, drumDensity: 50, drumDelay: 8,
   });
 
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const recordingStreamRef = useRef<MediaStream | null>(null);
+  const recordingUrlRef = useRef<string | null>(null);
+  const [recording, setRecording] = useState(false);
+  const [recordingUrl, setRecordingUrl] = useState<string | null>(null);
+  const [recordingType, setRecordingType] = useState('');
+  const [recordError, setRecordError] = useState('');
+
+  const stopRecording = () => {
+    if (recorderRef.current?.state === 'recording') recorderRef.current.stop();
+  };
+
+  const startRecording = async () => {
+    const canvas = canvasRef.current;
+    if (!canvas || !hasImage) return;
+    setRecordError('');
+    if (typeof MediaRecorder === 'undefined' || typeof canvas.captureStream !== 'function') {
+      setRecordError('Video recording is unavailable in this browser. Use your phone’s screen recorder.');
+      return;
+    }
+    try {
+      const audio = await music.recordingStream();
+      const stream = canvas.captureStream(30);
+      // Clone audio so stopping a recording never stops the engine’s audio track.
+      audio.getAudioTracks().forEach(track => stream.addTrack(track.clone()));
+      recordingStreamRef.current = stream;
+      const mimeType = ['video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
+        .find(type => MediaRecorder.isTypeSupported(type));
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      const chunks: Blob[] = [];
+      recorder.ondataavailable = event => { if (event.data.size) chunks.push(event.data); };
+      recorder.onstop = () => {
+        stream.getTracks().forEach(track => track.stop());
+        recordingStreamRef.current = null;
+        recorderRef.current = null;
+        setRecording(false);
+        if (!chunks.length) return;
+        if (recordingUrlRef.current) URL.revokeObjectURL(recordingUrlRef.current);
+        const url = URL.createObjectURL(new Blob(chunks, { type: recorder.mimeType }));
+        recordingUrlRef.current = url;
+        setRecordingType(recorder.mimeType);
+        setRecordingUrl(url);
+      };
+      recorder.onerror = () => { setRecordError('Recording failed. Please try again.'); stopRecording(); };
+      recorderRef.current = recorder;
+      recorder.start(1000);
+      setRecording(true);
+    } catch {
+      recordingStreamRef.current?.getTracks().forEach(track => track.stop());
+      recordingStreamRef.current = null;
+      setRecordError('Could not start recording in this browser. Try your phone’s screen recorder.');
+    }
+  };
+
+  useEffect(() => () => {
+    if (beatRef.current !== null) clearInterval(beatRef.current);
+    const recorder = recorderRef.current;
+    if (recorder) { recorder.onstop = null; if (recorder.state !== 'inactive') recorder.stop(); }
+    recordingStreamRef.current?.getTracks().forEach(track => track.stop());
+    if (recordingUrlRef.current) URL.revokeObjectURL(recordingUrlRef.current);
+    music.stop();
+  }, []);
+
   const draw = () => {
     const canvas = canvasRef.current;
     const image = imageRef.current;
@@ -85,9 +151,13 @@ export default function App() {
     else { dw = height * imgRatio; dx = (width - dw) / 2; }
     ctx.drawImage(image, dx, dy, dw, dh);
 
-    const drawnPlacements = livePlacementRef.current
-      ? [...placementsRef.current, livePlacementRef.current]
-      : placementsRef.current;
+    const drawnPlacements = [...placementsRef.current, ...livePlacementsRef.current.values()];
+
+    drawnPlacements.forEach(placement => {
+      refractPhoto(ctx, image, { x: dx, y: dy, width: dw, height: dh },
+        placement.x * dpr, placement.y * dpr, placement.radius * dpr,
+        visualHitsRef.current[placement.instrument]);
+    });
 
     if (drawnPlacements.length) {
       const hue = drawnPlacements.reduce((sum, item) => sum + item.tone.hue, 0) / drawnPlacements.length;
@@ -154,38 +224,32 @@ export default function App() {
       const x = placement.x * dpr;
       const y = placement.y * dpr;
       const r = placement.radius * dpr;
-      ctx.save();
-      ctx.strokeStyle = config.color;
-      ctx.lineWidth = 2 * dpr;
-      ctx.shadowColor = config.color;
-      ctx.shadowBlur = (7 + pulseRef.current * 12) * dpr;
-      ctx.beginPath();
-      ctx.arc(x, y, r * (1 + pulseRef.current * 0.08), 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.shadowBlur = 0;
-      ctx.globalAlpha = 0.82;
-      ctx.lineWidth = 3 * dpr;
-      ctx.beginPath();
-      ctx.arc(x, y, r + 5 * dpr, -Math.PI / 2,
-        -Math.PI / 2 + Math.PI * 2 * (phaseRef.current / 8));
-      ctx.stroke();
-      ctx.restore();
+      drawGlassRim(ctx, x, y, r, config.color, dpr,
+        visualHitsRef.current[placement.instrument]);
     });
   };
 
   const startBeat = () => {
     if (beatRef.current) return;
+    beatTimeRef.current = performance.now();
     beatRef.current = window.setInterval(() => {
+      const now = performance.now();
+      beatProgressRef.current += (now - beatTimeRef.current) / (30000 / tempoRef.current);
+      beatTimeRef.current = now;
+      if (beatProgressRef.current < 1) return;
+      // Keep phase between ticks without bursting missed notes after backgrounding.
+      beatProgressRef.current %= 1;
       const hits = music.pulse();
       hits.forEach((instrument) => { visualHitsRef.current[instrument] = 1; });
       phaseRef.current = (phaseRef.current + 1) % 8;
       pulseRef.current = 1;
-    }, 30000 / tempoRef.current);
+    }, 16);
   };
 
   const stopBeat = () => {
     if (beatRef.current) clearInterval(beatRef.current);
     beatRef.current = null;
+    beatProgressRef.current = 0;
   };
 
   useEffect(() => {
@@ -212,7 +276,6 @@ export default function App() {
       drumDelay: controls.drumDelay / 100,
       fourOnFloor,
     });
-    if (placementsRef.current.length) { stopBeat(); startBeat(); }
   }, [controls, fourOnFloor]);
 
   useEffect(() => {
@@ -295,20 +358,36 @@ export default function App() {
     pulseRef.current = 1;
   };
 
-  const playLiveAt = async (clientX: number, clientY: number) => {
-    const placement = makePlacementAt(clientX, clientY, -1);
+  const playLiveAt = async (clientX: number, clientY: number, pointerId: number) => {
+    const placement = makePlacementAt(clientX, clientY, -pointerId - 1);
     if (!placement) return;
-    livePlacementRef.current = placement;
-    await music.playPlacements([...placementsRef.current, placement]);
-    startBeat();
+    const previous = livePlacementsRef.current.get(pointerId);
+    // A held touch keeps its instrument when another instrument is selected.
+    if (previous) placement.instrument = previous.instrument;
+    livePlacementsRef.current.set(pointerId, placement);
+    await music.playPlacements([...placementsRef.current, ...livePlacementsRef.current.values()]);
+    if (placementsRef.current.length || livePlacementsRef.current.size) startBeat();
     pulseRef.current = 1;
   };
 
-  const stopLive = () => {
-    livePlacementRef.current = null;
-    if (placementsRef.current.length) void music.playPlacements(placementsRef.current);
+  const stopLive = (pointerId?: number) => {
+    if (pointerId === undefined) livePlacementsRef.current.clear();
+    else livePlacementsRef.current.delete(pointerId);
+    const next = [...placementsRef.current, ...livePlacementsRef.current.values()];
+    if (next.length) void music.playPlacements(next);
     else { stopBeat(); music.stop(); }
   };
+
+  useEffect(() => {
+    const release = () => stopLive();
+    const hide = () => { if (document.hidden) release(); };
+    window.addEventListener('blur', release);
+    document.addEventListener('visibilitychange', hide);
+    return () => {
+      window.removeEventListener('blur', release);
+      document.removeEventListener('visibilitychange', hide);
+    };
+  }, []);
 
   const updatePlacements = (next: Placement[]) => {
     placementsRef.current = next;
@@ -324,6 +403,7 @@ export default function App() {
     image.onload = () => {
       imageRef.current = image;
       music.setVariation(crypto.getRandomValues(new Uint32Array(1))[0] / 0xffffffff);
+      stopLive();
       updatePlacements([]);
       setHasImage(true);
       URL.revokeObjectURL(url);
@@ -334,22 +414,30 @@ export default function App() {
   return <main className="app">
     <header className="topbar">
       <div><div className="eyebrow">IMAGE / MUSIC</div><h1>Build a photo loop</h1></div>
+      <div className="headerActions">
+      <button className={`recordButton ${recording ? 'recording' : ''}`} disabled={!hasImage} onClick={() => { if (recording) stopRecording(); else void startRecording(); }} aria-pressed={recording}><span aria-hidden="true">{recording ? '■' : '●'}</span> {recording ? 'Stop' : 'Record'}</button>
       <label className="uploadButton">{hasImage ? '↗ Change photo' : '↗ Add photo'}
         <input type="file" accept="image/*" onChange={(e) => upload(e.target.files?.[0])} />
       </label>
+      </div>
     </header>
+    {recordError && <div className="recordMessage" role="alert">{recordError}</div>}
+    {recordingUrl && <div className="recordMessage"><a href={recordingUrl} download={`image-music.${recordingType.includes('mp4') ? 'mp4' : 'webm'}`}>↓ Save recording</a><button onClick={() => { URL.revokeObjectURL(recordingUrl); setRecordingUrl(null); }}>Dismiss</button></div>}
 
     <div className="instrument composer">
       <section className={`stage ${hasImage ? 'hasImage' : ''}`}>
-        <div className="stageTop"><span><i /> COLOR IS YOUR INSTRUMENT</span><span>{String(placements.length).padStart(2, '0')} LOOPS</span></div>
+
         {!hasImage && <label className="emptyState"><div className="orb"><span>＋</span></div><strong>Choose a photo</strong><span>Place instruments onto its colors and textures.</span><b className="emptyCta">Choose a photo ↗</b>
           <input type="file" accept="image/*" onChange={(e) => upload(e.target.files?.[0])} /></label>}
         <canvas ref={canvasRef} className={`canvas placementCanvas ${mode === 'live' ? 'liveCanvas' : ''}`}
+          onContextMenu={e => e.preventDefault()}
+          onDragStart={e => e.preventDefault()}
           onPointerDown={(e) => {
+            e.preventDefault();
             void music.unlock();
             if (mode === 'live') {
               e.currentTarget.setPointerCapture(e.pointerId);
-              void playLiveAt(e.clientX, e.clientY);
+              void playLiveAt(e.clientX, e.clientY, e.pointerId);
               return;
             }
             const point = canvasPoint(e.clientX, e.clientY);
@@ -365,7 +453,7 @@ export default function App() {
           }}
           onPointerMove={(e) => {
             if (mode === 'live') {
-              if (e.pointerType === 'mouse' || e.buttons > 0) void playLiveAt(e.clientX, e.clientY);
+              if (e.pointerType === 'mouse' || livePlacementsRef.current.has(e.pointerId)) void playLiveAt(e.clientX, e.clientY, e.pointerId);
               return;
             }
             const drag = dragRef.current;
@@ -380,7 +468,7 @@ export default function App() {
             setPlacements(next);
           }}
           onPointerUp={(e) => {
-            if (mode === 'live') { stopLive(); return; }
+            if (mode === 'live') { stopLive(e.pointerId); return; }
             const drag = dragRef.current;
             if (drag) {
               dragRef.current = null;
@@ -400,20 +488,21 @@ export default function App() {
             pointerStartRef.current = null;
             if (start && Math.hypot(e.clientX - start.x, e.clientY - start.y) < 12) void placeAt(e.clientX, e.clientY);
           }}
-          onPointerCancel={() => {
-            if (mode === 'live') stopLive();
+          onLostPointerCapture={e => { if (mode === 'live') stopLive(e.pointerId); }}
+          onPointerCancel={(e) => {
+            if (mode === 'live') stopLive(e.pointerId);
             dragRef.current = null; pointerStartRef.current = null;
           }}
-          onPointerLeave={(e) => { if (mode === 'live' && e.pointerType === 'mouse') stopLive(); }} />
+          onPointerLeave={(e) => { if (mode === 'live' && e.pointerType === 'mouse') stopLive(e.pointerId); }} />
         {hasImage && !placements.length && <div className="hint">{mode === 'live'
-          ? 'Move the cursor — press and drag on mobile'
+          ? 'Touch and play — use multiple fingers'
           : 'Choose an instrument, set its size, then tap the photo'}</div>}
       </section>
     </div>
     <section className="performanceBar" aria-label="Common controls">
       <div className="modePicker">
         <button aria-pressed={mode === 'place'} className={mode === 'place' ? 'selected' : ''} onClick={() => { stopLive(); setMode('place'); }}>Place loops</button>
-        <button aria-pressed={mode === 'live'} className={mode === 'live' ? 'selected' : ''} onClick={() => setMode('live')}>Play live</button>
+        <button aria-pressed={mode === 'live'} className={mode === 'live' ? 'selected' : ''} onClick={() => { stopLive(); setMode('live'); }}>Play live</button>
       </div>
       <div className="placementActions">
         <button aria-label="Undo last loop" disabled={!placements.length} onClick={() => updatePlacements(placementsRef.current.slice(0, -1))}>↶ <span>Undo</span></button>
@@ -439,7 +528,7 @@ export default function App() {
           onPointerDown={event => { sheetDragStart.current = event.clientY; event.currentTarget.setPointerCapture(event.pointerId); }}
           onPointerUp={event => { if (sheetDragStart.current !== null && event.clientY - sheetDragStart.current > 30) setSheet(null); sheetDragStart.current = null; }}
           onPointerCancel={() => { sheetDragStart.current = null; }}><span /></button>
-        <header className="sheetHeader"><div><div className="eyebrow">{sheet === 'mix' ? 'SHAPE THE WHOLE LOOP' : 'MAKE IT YOUR SOUND'}</div><h2 id="sheetTitle">{sheet === 'mix' ? 'The mix' : INSTRUMENTS.find(i => i.id === sheet)?.label}</h2></div><button onClick={() => setSheet(null)} aria-label="Close controls">✕</button></header>
+        <header className="sheetHeader"><div><h2 id="sheetTitle">{sheet === 'mix' ? 'The mix' : INSTRUMENTS.find(i => i.id === sheet)?.label}</h2></div><button onClick={() => setSheet(null)} aria-label="Close controls">✕</button></header>
         {sheet === 'keys' && <div className="instrumentModule keysModule"><strong>🎹 Keyboard</strong>
           {([['keys', 'Volume', 'Sets the level of every keyboard circle.'], ['keysTone', 'Tone', 'Moves from soft keys to a brighter synth.'],
             ['keysSustain', 'Sustain', 'Controls how long keyboard notes ring.'], ['keysDelay', 'Delay', 'Sends keyboard notes into the echo.']] as const).map(([key, label, help]) =>
@@ -479,6 +568,6 @@ export default function App() {
       </div>
     </section>
     </div>
-    <footer><span>SEE IT. HEAR IT. MAKE IT YOURS.</span><span>IMAGE MUSIC ✳</span></footer>
+
   </main>;
 }

@@ -52,6 +52,7 @@ function hz(semitones: number) {
 export class ChordEngine {
   private context: AudioContext | null = null;
   private output: GainNode | null = null;
+  private recorderOutput: MediaStreamAudioDestinationNode | null = null;
   private delay: DelayNode | null = null;
   private feedback: GainNode | null = null;
   private placements: Placement[] = [];
@@ -74,13 +75,14 @@ export class ChordEngine {
   }
 
   configure(next: MusicControls) {
+    const spaceChanged = next.space !== this.controls.space;
     this.controls = next;
-    this.updateSpace();
+    if (spaceChanged) this.updateSpace();
   }
 
   private updateSpace() {
-    if (this.delay) this.delay.delayTime.value = 0.22 + this.controls.space * 0.25 + this.variation * 0.04;
-    if (this.feedback) this.feedback.gain.value = Math.min(0.4, this.controls.space * 0.38);
+    if (this.delay) this.delay.delayTime.setTargetAtTime(0.22 + this.controls.space * 0.25 + this.variation * 0.04, this.context!.currentTime, 0.04);
+    if (this.feedback) this.feedback.gain.setTargetAtTime(Math.min(0.4, this.controls.space * 0.38), this.context!.currentTime, 0.04);
   }
 
   async unlock() {
@@ -101,6 +103,8 @@ export class ChordEngine {
       this.feedback.connect(this.delay);
       this.delay.connect(compressor);
       compressor.connect(this.context.destination);
+      this.recorderOutput = this.context.createMediaStreamDestination();
+      compressor.connect(this.recorderOutput);
       this.updateSpace();
     }
     if (this.context.state === 'suspended') await this.context.resume();
@@ -110,10 +114,16 @@ export class ChordEngine {
     silent.start();
   }
 
-  async playPlacements(placements: Placement[]) {
+  async recordingStream(): Promise<MediaStream> {
     await this.unlock();
+    if (!this.recorderOutput) throw new Error('Audio recording unavailable');
+    return this.recorderOutput.stream;
+  }
+
+  async playPlacements(placements: Placement[]) {
     const wasEmpty = this.placements.length === 0;
     this.placements = placements;
+    await this.unlock();
     if (wasEmpty && this.placements.length) this.pulse();
   }
 
