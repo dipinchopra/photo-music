@@ -213,16 +213,23 @@ export default function App() {
     const drawnPlacements = [...scenePlacements(), ...livePlacementsRef.current.values()];
 
     const visualTime = motionRef.current === 'off' ? 0 : motionSecondsRef.current;
-    drawnPlacements.forEach(placement => {
+    const renderVisuals = (target: CanvasRenderingContext2D, scale: number) => drawnPlacements.forEach(placement => {
       const color = INSTRUMENTS.find(item => item.id === placement.instrument)!.color;
-      drawVisual(ctx, image, { x: dx / dpr, y: dy / dpr, width: dw / dpr, height: dh / dpr },
-        placement, visualModeRef.current, visualTime, visualHitsRef.current.get(placement.id) ?? 0, color, dpr);
+      drawVisual(target, image, { x: dx / dpr, y: dy / dpr, width: dw / dpr, height: dh / dpr },
+        placement, visualModeRef.current, visualTime, visualHitsRef.current.get(placement.id) ?? 0, color, scale);
     });
+    renderVisuals(ctx, dpr);
     const cropped = recordingCanvasRef.current;
     const recordingContext = cropped?.getContext('2d');
     if (cropped && recordingContext) {
-      // Copy only the photo rectangle, including all rendered lenses and glints.
-      recordingContext.drawImage(canvas, dx, dy, dw, dh, 0, 0, cropped.width, cropped.height);
+      // Render the same live scene directly at export resolution. Copying the
+      // smaller display canvas loses fine refraction and thin ribbon details.
+      const sx = cropped.width / (dw / dpr), sy = cropped.height / (dh / dpr);
+      recordingContext.save();
+      recordingContext.setTransform(sx, 0, 0, sy, -dx / dpr * sx, -dy / dpr * sy);
+      recordingContext.drawImage(image, dx / dpr, dy / dpr, dw / dpr, dh / dpr);
+      renderVisuals(recordingContext, 1);
+      recordingContext.restore();
     }
     if (visualModeRef.current === 'living') drawnPlacements.forEach(placement => {
       drawLivingHandle(ctx, placement, INSTRUMENTS.find(item => item.id === placement.instrument)!.color, dpr);
