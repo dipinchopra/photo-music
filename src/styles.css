@@ -474,3 +474,21 @@ html, body, #root, .app, .app * {
 .motionControls small { font-size: 11px; color: #888; }
 .motionControls .modePicker button { padding: 8px 13px; }
 @media (max-width: 700px) { .motionControls small { flex-basis: 100%; } }
+
+.photoControls { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 20px; padding: 16px; border: 1px solid #ffffff12; border-radius: 18px; background: #ffffff03; }
+.photoControls label, .motionAmount { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.photoControls label > span, .motionAmount > span { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; color: #ccc; }
+.photoControls output, .motionAmount output { color: #888; white-space: nowrap; }
+.photoControls > small { grid-column: 1 / -1; color: #888; font-size: 11px; line-height: 1.5; }
+.motionAmount { width: 140px; }
+@media (max-width: 700px) {
+  .photoControls { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 12px; gap: 12px 16px; }
+  .photoControls label:nth-child(3) { grid-column: 1 / -1; }
+  .placementActions { gap: 0; }
+  .placementActions button { padding: 8px; font-size: 11px; }
+}
+
+/* Keep the photo usable and the controls reachable on short phone screens. */
+.app { overflow-y: auto; }
+.composer { min-height: 180px; flex-shrink: 0; }
+.topbar, .performanceBar, .photoControls, .motionControls, .recordMessage { flex-shrink: 0; }

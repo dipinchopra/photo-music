@@ -37,3 +37,11 @@ test('sway remains inside the photo and breathe changes only radius', () => {
     assert.ok(breathing.radius >= 36.4 && breathing.radius <= 43.6);
   }
 });
+
+
+test('Motion Amount scales movement and zero keeps the original circle', () => {
+  assert.equal(moveCircle(circle, 'sway', 4, bounds, 0), circle);
+  const small = moveCircle(circle, 'sway', 4, bounds, 0.25);
+  const large = moveCircle(circle, 'sway', 4, bounds, 1);
+  assert.ok(Math.abs((large.x - circle.x) * 0.25 - (small.x - circle.x)) < 1e-9);
+});

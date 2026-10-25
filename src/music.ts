@@ -7,6 +7,7 @@ export type ImageTone = {
   saturation: number;
   brightness: number;
   texture: number;
+  profile?: { contour: readonly number[]; activity: readonly number[] };
 };
 
 export type Placement = {
@@ -224,20 +225,26 @@ export class ChordEngine {
     attack: number, send: number, guitar = false) {
     const style = this.composition.style;
     const tone = Math.max(0, Math.min(1, brightness));
-    if (style === 'glass') {
+    if (guitar) {
+      // A distinct plucked voice retains its identity across image palettes.
+      const cutoff = (style === 'ambient' ? 600 : 1200) + tone * 3800;
+      this.tone(frequency, volume * 0.76, duration, tone > 0.7 ? 'sawtooth' : 'triangle', cutoff, 0.005, send);
+      this.tone(frequency * 2, volume * 0.16, duration * 0.38, 'sine', cutoff * 1.5, 0.003, 0);
+      this.tone(frequency * 3, volume * 0.08, 0.09, 'sine', cutoff * 2, 0.002, 0);
+    } else if (style === 'glass') {
       // Inharmonic partial gives a struck bell a distinct metallic attack.
-      this.tone(frequency, volume * 0.72, duration * 1.5, 'sine', 9000, 0.004, send * 0.65);
-      this.tone(frequency * 2.756, volume * 0.18, 0.22, 'sine', 9000, 0.003, send * 0.35);
-      this.tone(frequency * 4, volume * 0.1, 0.1, 'sine', 11000, 0.002, 0);
+      this.tone(frequency, volume * 0.72, duration * 1.5, 'sine', 1600 + tone * 7400, 0.004, send * 0.65);
+      this.tone(frequency * 2.756, volume * (0.06 + tone * 0.2), 0.22, 'sine', 9000, 0.003, send * 0.35);
+      this.tone(frequency * 4, volume * (0.02 + tone * 0.08), 0.1, 'sine', 11000, 0.002, 0);
     } else if (style === 'ambient') {
-      this.tone(frequency * 0.998, volume * 0.55, duration * 2.4, 'triangle', 500 + tone * 1000, 0.14, send);
+      this.tone(frequency * 0.998, volume * 0.55, duration * 2.4, 'triangle', 400 + tone * 3000, 0.05 + (1 - tone) * 0.15, send);
       this.tone(frequency * 1.002, volume * 0.45, duration * 2.1, 'sine', 1600, 0.19, send);
     } else if (style === 'pulse') {
       this.tone(frequency, volume * 0.75, duration * 0.85, tone > 0.6 ? 'sawtooth' : 'square',
         450 + tone * 3200, 0.004, send * 0.3);
       this.tone(frequency / 2, volume * 0.25, duration * 0.6, 'sine', 600, 0.006, 0);
     } else {
-      this.tone(frequency, volume * 0.8, duration, guitar ? 'sawtooth' : 'triangle',
+      this.tone(frequency, volume * 0.8, duration, 'triangle',
         950 + tone * 3800, Math.min(attack, 0.008), send * 0.6);
       this.tone(frequency * 2, volume * 0.2, 0.08, 'sine', 7000, 0.002, 0);
     }
@@ -329,7 +336,7 @@ export class ChordEngine {
     for (let voice = 0; voice < keys.length; voice++) {
       const lane = (voice + Math.floor(this.step / 2)) % keys.length;
       const placement = keys[lane];
-      const melody = circleEvent(composition, placement.tone, this.step, this.controls.complexity, lane);
+      const melody = circleEvent(composition, placement.tone, this.step, this.controls.complexity, lane, placement.radius);
       const previous = this.keyHistory.get(placement.id);
       if (!melody.active || !this.controls.keys || keyAttacks >= 2 || (previous && this.step - previous.step < 2)) continue;
       const phrase = phraseStep(composition, placement.tone, this.step, this.controls.complexity);
@@ -352,14 +359,14 @@ export class ChordEngine {
     for (let voice = 0; voice < guitars.length; voice++) {
       const lane = (voice + Math.floor(this.step / 2)) % guitars.length;
       const placement = guitars[lane];
-      const event = circleEvent(composition, placement.tone, this.step, this.controls.guitarStrum, lane);
+      const event = circleEvent(composition, placement.tone, this.step, this.controls.complexity, lane, placement.radius);
       if (!this.controls.guitar || !event.active || guitarAttacks >= 2) continue;
       guitarAttacks++;
       const phrase = phraseStep(composition, placement.tone, this.step + 3, this.controls.complexity);
       hits.add('guitar');
       this.placementHit(placement.id);
       const base = root + (Math.abs(phrase.degree) % 3) * 2;
-      const degrees = this.controls.guitarStrum > 0.58 ? [base, base + 2, base + 4] : [base];
+      const degrees = placement.radius > 65 ? [base, base + 2, base + 4] : [base];
       degrees.forEach((degree, index) => {
         const volume = 0.065 * placement.level * this.controls.guitar * event.accent / Math.sqrt(Math.min(guitars.length, 3) * degrees.length);
         this.voice(noteAt(degree, 24), volume, 0.28 + this.controls.guitarStrum * 0.4,
@@ -372,14 +379,16 @@ export class ChordEngine {
     for (let voice = 0; voice < bass.length; voice++) {
       const lane = (voice + Math.floor(this.step / 2)) % bass.length;
       const placement = bass[lane];
-      const bassBeat = beat === 0 || beat === 4 || (this.controls.bassMovement > 0.32 && (beat === 2 || beat === 6))
+      const bassBeat = beat === 0 || beat === 4 || (this.controls.bassMovement > 0.32 && this.controls.complexity > 0.25 && (beat === 2 || beat === 6))
         || (this.controls.bassMovement > 0.75 && beat === 7 && bar % 4 === 3);
       if (!this.controls.bass || !bassBeat || bassAttacks >= 1) continue;
       bassAttacks++;
       hits.add('bass');
       this.placementHit(placement.id);
       const nextRoot = composition.progression[(bar + 1) % composition.progression.length];
-      const colorDegree = [0, 2, 4][Math.min(2, Math.floor(placement.tone.hue / 120))];
+      const contour = placement.tone.profile?.contour;
+      const localLight = contour?.length ? contour[Math.floor(this.step / 2) % contour.length] : placement.tone.brightness;
+      const colorDegree = [0, 2, 4][Math.min(2, Math.floor((placement.tone.hue / 360 * 0.4 + localLight * 0.6) * 3))];
       const degree = beat === 7 && this.controls.bassMovement > 0.58 ? nextRoot - 1
         : root + (beat === 0 && lane === 0 ? 0 : colorDegree);
       const register = this.controls.bassDepth > 0.66 ? 0 : 12;
@@ -391,7 +400,9 @@ export class ChordEngine {
     drums.forEach((placement) => {
       const variation = Math.floor(randomAt(composition.seed, Math.floor(placement.tone.hue) + 70) * 3);
       const fill = bar % 4 === 3 && beat >= 6 && this.controls.complexity > 0.45;
-      const volume = placement.level * this.controls.drums / Math.sqrt(Math.max(1, drums.length));
+      const detail = placement.tone.profile?.activity;
+      const localAccent = detail?.length ? 0.65 + detail[beat % detail.length] * 0.35 : 1;
+      const volume = placement.level * this.controls.drums * localAccent / Math.sqrt(Math.max(1, drums.length));
       const brightness = placement.tone.brightness;
 
       if (brightness < 0.34) {
@@ -419,7 +430,7 @@ export class ChordEngine {
         const sparse = [1, 3, 5, 7];
         const dense = variation === 0 ? [0, 1, 2, 3, 4, 5, 6, 7]
           : variation === 1 ? [0, 1, 3, 4, 5, 7] : [1, 2, 3, 5, 6, 7];
-        const pattern = placement.tone.texture * 0.35 + this.controls.drumDensity * 0.45 + composition.energy * 0.35 > 0.58 ? dense : sparse;
+        const pattern = placement.tone.texture * 0.35 + this.controls.drumDensity * 0.3 + composition.energy * 0.25 + this.controls.complexity * 0.35 > 0.58 ? dense : sparse;
         if (pattern.includes(beat)) {
           hits.add('drums');
           this.placementHit(placement.id);

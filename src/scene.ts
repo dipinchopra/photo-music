@@ -14,12 +14,12 @@ export function recordingSize(width: number, height: number) {
   return { width: Math.max(2, Math.round(width * scale / 2) * 2), height: Math.max(2, Math.round(height * scale / 2) * 2) };
 }
 
-export function moveCircle(placement: Placement, motion: Motion, seconds: number, bounds: Bounds): Placement {
-  if (motion === 'off') return placement;
+export function moveCircle(placement: Placement, motion: Motion, seconds: number, bounds: Bounds, amount = 1): Placement {
+  if (motion === 'off' || amount === 0) return placement;
   const phase = placement.id * 2.39996;
   const wave = (Math.sin(seconds * 0.65 + phase) - Math.sin(phase)) / 2;
-  if (motion === 'breathe') return { ...placement, radius: placement.radius * (1 + wave * 0.09) };
-  const amplitude = Math.min(placement.radius * 0.4, bounds.width * 0.055, bounds.height * 0.055);
+  if (motion === 'breathe') return { ...placement, radius: placement.radius * (1 + wave * 0.09 * amount) };
+  const amplitude = Math.min(placement.radius * 0.4, bounds.width * 0.055, bounds.height * 0.055) * amount;
   const margin = Math.min(placement.radius, bounds.width / 2, bounds.height / 2);
   const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
   return {

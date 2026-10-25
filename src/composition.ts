@@ -3,6 +3,7 @@ import type { ImageTone } from './music';
 export type Composition = {
   style: 'ambient' | 'glass' | 'plucked' | 'pulse'; tempo: number; swing: number;
   seed: number; tonic: number; scale: readonly number[];
+  rhythm?: readonly number[];
   progression: readonly number[]; energy: number; warmth: number;
 };
 const MODES = [
@@ -11,7 +12,6 @@ const MODES = [
   [0, 2, 4, 5, 7, 9, 11], // major
   [0, 2, 4, 6, 7, 9, 11], // lydian
 ];
-const PROGRESSIONS = [[0, 5, 3, 4], [0, 3, 5, 4], [0, 4, 1, 3], [0, 2, 5, 3], [0, 6, 3, 4]];
 
 export function randomAt(seed: number, index: number) {
   let n = (seed ^ Math.imul(index + 1, 0x9e3779b9)) >>> 0;
@@ -45,7 +45,12 @@ export function composeImage(cells: ImageTone[]): Composition {
     style, tempo: tempos[style] + Math.round(energy * 16),
     swing: style === 'plucked' ? 0.2 : style === 'glass' ? 0.09 : 0,
     seed, tonic: Math.floor(randomAt(seed, 0) * 12), scale: MODES[mode],
-    progression: PROGRESSIONS[Math.floor(randomAt(seed, 1) * PROGRESSIONS.length)],
+    progression: [0, ...[1, 2, 3].map(section => {
+      const cell = cells[Math.floor(section * cells.length / 4)];
+      return cell ? [2, 3, 4, 5][Math.floor((cell.hue / 360 * 0.6 + cell.brightness * 0.4) * 4) % 4] : 4;
+    })],
+    rhythm: cells.map((cell, index) => Math.min(1, cell.texture * 0.45 + cell.saturation * 0.2
+      + Math.abs(cell.brightness - cells[(index + 1) % cells.length].brightness) * 0.7)),
     energy,
     warmth: brightness,
   };
@@ -66,7 +71,10 @@ export function phraseStep(composition: Composition, tone: ImageTone, step: numb
   const active = beat === 0 || (composition.style === 'ambient' && beat % 2 === 1 ? false : randomAt(seed, slot) < density);
   const contour = [0, 1, 2, 1, -1, 0, 2, -1];
   const start = Math.floor(tone.hue / 360 * 7);
-  const motion = contour[(slot + Math.floor(randomAt(seed, 20) * 8)) % 8];
+  const imageContour = tone.profile?.contour;
+  const region = imageContour?.length ? imageContour[(Math.floor(step / 2) + bar % 2) % imageContour.length] : undefined;
+  const motion = region === undefined ? contour[(slot + Math.floor(randomAt(seed, 20) * 8)) % 8]
+    : Math.round((region - 0.5) * 6);
   const response = bar % 4 === 2 ? 1 : bar % 4 === 3 ? -1 : 0;
   const degree = start + motion * (tone.saturation > 0.55 ? 2 : 1) + response;
   return { active, degree, accent: beat % 2 === 0 ? 1 : 0.65 + randomAt(seed, slot + 40) * 0.2 };
@@ -76,18 +84,18 @@ export function phraseStep(composition: Composition, tone: ImageTone, step: numb
 export function melodyEvent(composition: Composition, step: number, complexity: number) {
   const phrase = Math.floor(step / 32);
   const slot = step % 32;
-  const patterns = [
-    [0, 3, 7, 10, 14, 18, 22, 26],
-    [0, 4, 7, 11, 14, 18, 23, 26],
-    [0, 3, 6, 10, 14, 19, 22, 26],
-    [0, 4, 8, 11, 15, 18, 22, 26],
-  ];
-  const pattern = patterns[Math.floor(randomAt(composition.seed, phrase + 120) * patterns.length)];
-  let onsets = composition.style === 'ambient' ? pattern.filter((_, i) => i % 2 === 0) : [...pattern];
-  if (complexity > 0.75 && composition.style !== 'ambient') {
-    const passing = onsets.find((onset, i) => i < onsets.length - 1 && onsets[i + 1] - onset >= 5);
-    if (passing !== undefined) onsets = [...onsets, passing + 2].sort((a, b) => a - b);
-  }
+  const ambient = composition.style === 'ambient';
+  const anchors = ambient ? [0, 16] : [0, 8, 16, 24];
+  const candidates = ambient ? [4, 8, 12, 20, 24] : [2, 4, 6, 10, 12, 14, 18, 20, 22, 26];
+  // Rank shared beat slots using the photo's edge/texture distribution.
+  // Density adds detail to the same phrase, rather than switching patterns.
+  const ranked = [...candidates].sort((a, b) => {
+    const score = (beat: number) => (composition.rhythm?.[Math.floor(beat / 2) % (composition.rhythm?.length || 1)] ?? 0)
+      + randomAt(composition.seed, beat + Math.floor(phrase / 2) * 32 + 120) * 0.35;
+    return score(b) - score(a);
+  });
+  const count = Math.round(Math.max(0, Math.min(1, complexity)) * candidates.length);
+  const onsets = [...anchors, ...ranked.slice(0, count)].sort((a, b) => a - b);
   const index = onsets.indexOf(slot);
   const next = index >= 0 ? onsets[index + 1] ?? 29 : slot;
   return {
@@ -100,9 +108,10 @@ export function melodyEvent(composition: Composition, step: number, complexity: 
 
 
 /** Each placed circle gets a stable musical lane, even on similar colors. */
-export function circleEvent(composition: Composition, _tone: ImageTone, step: number, complexity: number, lane: number) {
+export function circleEvent(composition: Composition, _tone: ImageTone, step: number, complexity: number, lane: number, radius = 50) {
   // Color shapes pitch and timbre, while all parts share the same rhythmic motif.
   // Whole-beat lane offsets preserve that groove as circles are added or moved.
   const offset = lane * 2 % 8;
-  return melodyEvent(composition, step + offset, complexity);
+  const size = Math.max(0, Math.min(1, (radius - 28) / 62));
+  return melodyEvent(composition, step + offset, Math.min(1, complexity * (0.55 + size * 0.9)));
 }

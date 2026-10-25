@@ -37,13 +37,16 @@ export function sampleAverageColor(
   let r = 0, g = 0, b = 0, count = 0;
   const stride = 16; // sample every 4th pixel (RGBA = 4 values)
   for (let i = 0; i < data.length; i += stride) {
+    const pixel = i / 4;
+    const px = sx + pixel % width, py = sy + Math.floor(pixel / width);
+    if ((px - x) ** 2 + (py - y) ** 2 > radius ** 2) continue;
     r += data[i];
     g += data[i + 1];
     b += data[i + 2];
     count++;
   }
 
-  const hsl = rgbToHsl(r / count, g / count, b / count);
+  const hsl = rgbToHsl(r / Math.max(1, count), g / Math.max(1, count), b / Math.max(1, count));
 
   // An 8×8 discrete Fourier transform measures local spatial detail. Smooth
   // areas concentrate energy near DC; edges and texture create high frequencies.
@@ -80,6 +83,22 @@ export function sampleAverageColor(
     }
   }
 
+  // Read the region's actual light/edge contour, rather than choosing a preset melody.
+  const contour: number[] = [], activity: number[] = [];
+  for (let gx = 0; gx < size; gx++) {
+    let light = 0, edge = 0, samples = 0;
+    for (let gy = 0; gy < size; gy++) {
+      const nx = (gx + 0.5) / size * 2 - 1, ny = (gy + 0.5) / size * 2 - 1;
+      if (nx * nx + ny * ny > 1) continue;
+      const value = luminance[gy * size + gx];
+      light += value;
+      if (gy) edge += Math.abs(value - luminance[(gy - 1) * size + gx]);
+      if (gx) edge += Math.abs(value - luminance[gy * size + gx - 1]);
+      samples++;
+    }
+    contour.push(light / Math.max(1, samples));
+    activity.push(Math.min(1, edge / Math.max(1, samples) * 2.5));
+  }
   const texture = highEnergy / Math.max(0.0001, lowEnergy + highEnergy);
-  return { ...hsl, texture: Math.max(0, Math.min(1, texture)) };
+  return { ...hsl, texture: Math.max(0, Math.min(1, texture)), profile: { contour, activity } };
 }

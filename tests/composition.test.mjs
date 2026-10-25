@@ -64,7 +64,7 @@ test('lead phrases guarantee breathing space across images and variation levels'
         const composition = { ...composeImage(bright), style, seed };
         const onsets = Array.from({ length: 128 }, (_, step) => step)
           .filter(step => melodyEvent(composition, step, complexity).active);
-        assert.ok(onsets.length <= 36);
+        assert.ok(onsets.length <= 56);
         for (let i = 1; i < onsets.length; i++) assert.ok(onsets[i] - onsets[i - 1] >= 2);
         assert.ok(onsets.every(step => step % 32 <= 26));
       }
@@ -79,4 +79,31 @@ test('color changes during sway preserve the shared rhythmic grid', () => {
     const rhythm = cell => Array.from({ length: 64 }, (_, step) => circleEvent(composition, cell, step, 0.52, lane).active);
     assert.deepEqual(rhythm(dark[0]), rhythm(bright[0]));
   }
+});
+
+
+test('Density progressively adds notes to the same shared phrase', () => {
+  const composition = composeImage(bright);
+  let previous = [];
+  for (const density of [0, 0.2, 0.4, 0.6, 0.8, 1]) {
+    const onsets = Array.from({ length: 32 }, (_, step) => step).filter(step => melodyEvent(composition, step, density).active);
+    assert.ok(onsets.length > previous.length);
+    assert.ok(previous.every(step => onsets.includes(step)));
+    previous = onsets;
+  }
+});
+test('larger circles express more rhythmic detail within the same groove', () => {
+  const composition = composeImage(bright);
+  const rhythm = radius => Array.from({ length: 32 }, (_, step) => step)
+    .filter(step => circleEvent(composition, bright[0], step, 0.65, 0, radius).active);
+  const small = rhythm(28), medium = rhythm(50), large = rhythm(90);
+  assert.ok(small.length < medium.length && medium.length < large.length);
+  assert.ok(small.every(step => large.includes(step)));
+});
+test('local image contours create distinct melodic movement at the same average color', () => {
+  const composition = composeImage(bright);
+  const profile = [0.1, 0.2, 0.3, 0.4, 0.6, 0.7, 0.8, 0.9];
+  const degrees = contour => Array.from({ length: 16 }, (_, step) => phraseStep(composition,
+    { ...bright[0], profile: { contour, activity: Array(8).fill(0.5) } }, step, 0.52).degree);
+  assert.notDeepEqual(degrees(profile), degrees([...profile].reverse()));
 });

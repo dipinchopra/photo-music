@@ -39,7 +39,11 @@ export default function App() {
   const sheetDragStart = useRef<number | null>(null);
   const [sheet, setSheet] = useState<Instrument | 'mix' | null>(null);
   const openSheet = (value: Instrument | 'mix') => {
-    if (value !== 'mix') setSelected(value);
+    if (value !== 'mix') {
+      setSelected(value);
+      activeCircleRef.current = null;
+      setActiveCircleId(null);
+    }
     setSheet(current => current === value ? null : value);
   };
 
@@ -57,6 +61,8 @@ export default function App() {
   const [selected, setSelected] = useState<Instrument>('keys');
   const [mode, setMode] = useState<'place' | 'live'>('place');
   const [radius, setRadius] = useState(50);
+  const [activeCircleId, setActiveCircleId] = useState<number | null>(null);
+  const activeCircleRef = useRef<number | null>(null);
   const [fourOnFloor, setFourOnFloor] = useState(false);
   const [controls, setControls] = useState({
     tempo: 96, pitch: 0, complexity: 52, space: 58,
@@ -68,6 +74,8 @@ export default function App() {
 
   const [motion, setMotion] = useState<Motion>('off');
   const motionRef = useRef<Motion>('off');
+  const [motionAmount, setMotionAmount] = useState(55);
+  const motionAmountRef = useRef(0.55);
   const motionSecondsRef = useRef(0);
   const recordingCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -161,7 +169,7 @@ export default function App() {
     const rect = canvas.getBoundingClientRect();
     const bounds = photoBounds(rect.width, rect.height, image.naturalWidth, image.naturalHeight);
     return placementsRef.current.map(placement => dragRef.current?.id === placement.id ? placement
-      : moveCircle(placement, motionRef.current, motionSecondsRef.current, bounds));
+      : moveCircle(placement, motionRef.current, motionSecondsRef.current, bounds, motionAmountRef.current));
   };
 
   const draw = () => {
@@ -216,13 +224,22 @@ export default function App() {
       // Copy only the photo rectangle, including all rendered lenses and glints.
       recordingContext.drawImage(canvas, dx, dy, dw, dh, 0, 0, cropped.width, cropped.height);
     }
+    const active = drawnPlacements.find(placement => placement.id === activeCircleRef.current);
+    if (active) {
+      ctx.save();
+      ctx.setLineDash([2 * dpr, 5 * dpr]);
+      ctx.strokeStyle = 'rgba(255,255,255,.45)';
+      ctx.lineWidth = dpr;
+      ctx.beginPath(); ctx.arc(active.x * dpr, active.y * dpr, (active.radius + 5) * dpr, 0, Math.PI * 2); ctx.stroke();
+      ctx.restore();
+    }
   };
 
   const startBeat = () => {
     if (beatRef.current) return;
     beatRef.current = window.setInterval(() => {
       if (!music.needsScheduling) return;
-      if (motionRef.current !== 'off') {
+      if (motionRef.current !== 'off' || dragRef.current) {
         const moving = scenePlacements().map(placement => ({
           ...placement, tone: sampleToneAt(placement.x, placement.y, placement.radius) ?? placement.tone,
         }));
@@ -293,9 +310,12 @@ export default function App() {
 
   const canvasPoint = (clientX: number, clientY: number) => {
     const rect = canvasRef.current!.getBoundingClientRect();
+    const image = imageRef.current;
+    const bounds = image ? photoBounds(rect.width, rect.height, image.naturalWidth, image.naturalHeight)
+      : { x: 0, y: 0, width: rect.width, height: rect.height };
     return {
-      x: Math.max(0, Math.min(rect.width, clientX - rect.left)),
-      y: Math.max(0, Math.min(rect.height, clientY - rect.top)),
+      x: Math.max(bounds.x, Math.min(bounds.x + bounds.width, clientX - rect.left)),
+      y: Math.max(bounds.y, Math.min(bounds.y + bounds.height, clientY - rect.top)),
     };
   };
 
@@ -311,8 +331,8 @@ export default function App() {
     const scale = off.width / bounds.width;
     const sx = Math.max(0, Math.min(off.width - 1, (x - bounds.x) * scale));
     const sy = Math.max(0, Math.min(off.height - 1, (y - bounds.y) * scale));
-    const sample = sampleAverageColor(ctx, sx, sy, Math.max(2, sampleRadius * 0.35 * scale));
-    return { hue: sample.h, saturation: sample.s, brightness: sample.l, texture: sample.texture };
+    const sample = sampleAverageColor(ctx, sx, sy, Math.max(2, sampleRadius * scale));
+    return { hue: sample.h, saturation: sample.s, brightness: sample.l, texture: sample.texture, profile: sample.profile };
   };
 
   const makePlacementAt = (clientX: number, clientY: number, id: number) => {
@@ -330,10 +350,27 @@ export default function App() {
     } satisfies Placement;
   };
 
+  const selectCircle = (placement: Placement | null) => {
+    activeCircleRef.current = placement?.id ?? null;
+    setActiveCircleId(placement?.id ?? null);
+    if (placement) { setRadius(placement.radius); setSelected(placement.instrument); }
+  };
+
+  const resizeCircle = (value: number) => {
+    setRadius(value);
+    if (activeCircleRef.current === null) return;
+    const next = placementsRef.current.map(placement => placement.id === activeCircleRef.current ? {
+      ...placement, radius: value, level: 0.25 + (value - 28) / 62 * 0.75,
+      tone: sampleToneAt(placement.x, placement.y, value) ?? placement.tone,
+    } : placement);
+    updatePlacements(next);
+  };
+
   const placeAt = async (clientX: number, clientY: number) => {
     const placement = makePlacementAt(clientX, clientY, nextIdRef.current++);
     if (!placement) return;
     const next = [...placementsRef.current, placement];
+    selectCircle(placement);
     placementsRef.current = next;
     setPlacements(next);
     await music.playPlacements(next);
@@ -405,6 +442,7 @@ export default function App() {
   }, []);
 
   const updatePlacements = (next: Placement[]) => {
+    if (!next.some(placement => placement.id === activeCircleRef.current)) selectCircle(null);
     placementsRef.current = next;
     setPlacements(next);
     void music.playPlacements(next);
@@ -434,7 +472,7 @@ export default function App() {
         const cells = [];
         for (let y = 8; y < 64; y += 16) for (let x = 8; x < 64; x += 16) {
           const cell = sampleAverageColor(context, x, y, 8);
-          cells.push({ hue: cell.h, saturation: cell.s, brightness: cell.l, texture: cell.texture });
+          cells.push({ hue: cell.h, saturation: cell.s, brightness: cell.l, texture: cell.texture, profile: cell.profile });
         }
         const composition = composeImage(cells);
         music.setComposition(composition);
@@ -484,6 +522,7 @@ export default function App() {
             const hit = [...scenePlacements()].reverse().find((placement) =>
               Math.hypot(point.x - placement.x, point.y - placement.y) <= placement.radius);
             if (hit) {
+              selectCircle(hit);
               placementsRef.current = placementsRef.current.map(placement => placement.id === hit.id ? hit : placement);
               e.currentTarget.setPointerCapture(e.pointerId);
               dragRef.current = {
@@ -513,10 +552,7 @@ export default function App() {
             const drag = dragRef.current;
             if (drag) {
               dragRef.current = null;
-              if (!drag.moved) {
-                updatePlacements(placementsRef.current.filter((placement) => placement.id !== drag.id));
-                return;
-              }
+              if (!drag.moved) return;
               const next = placementsRef.current.map((placement) => {
                 if (placement.id !== drag.id) return placement;
                 const tone = sampleToneAt(placement.x, placement.y, placement.radius);
@@ -546,9 +582,16 @@ export default function App() {
         <button aria-pressed={mode === 'live'} className={mode === 'live' ? 'selected' : ''} onClick={() => { stopLive(); setMode('live'); }}>Play live</button>
       </div>
       <div className="placementActions">
+        <button disabled={activeCircleId === null} onClick={() => updatePlacements(placementsRef.current.filter(placement => placement.id !== activeCircleRef.current))}>Remove</button>
         <button aria-label="Undo last loop" disabled={!placements.length} onClick={() => updatePlacements(placementsRef.current.slice(0, -1))}>↶ <span>Undo</span></button>
         <button disabled={!placements.length} onClick={() => updatePlacements([])}>Clear</button>
       </div>
+    </section>
+    <section className="photoControls" aria-label="Photo performance">
+      <label><span>Tempo <output>{controls.tempo} BPM</output></span><Slider min={55} max={160} value={controls.tempo} onChange={value => setControl('tempo', value)} /></label>
+      <label><span>Density <output>{controls.complexity}%</output></span><Slider value={controls.complexity} onChange={value => setControl('complexity', value)} /></label>
+      <label><span>{activeCircleId === null ? 'New circle size' : 'Selected circle size'} <output>{Math.round(radius)}px</output></span><Slider min={28} max={90} value={radius} onChange={resizeCircle} /></label>
+      <small>Tap a circle to select it. Drag to explore. Larger circles collect more detail.</small>
     </section>
     <section className="motionControls" aria-label="Circle motion">
       <span>Motion</span>
@@ -560,6 +603,7 @@ export default function App() {
             music.updatePlacements([...placementsRef.current, ...livePlacementsRef.current.values()]);
           }}>{value === 'off' ? 'Off' : value === 'breathe' ? 'Breathe' : 'Sway'}</button>)}
       </div>
+      {motion !== 'off' && <label className="motionAmount"><span>Amount <output>{motionAmount}%</output></span><Slider value={motionAmount} onChange={value => { setMotionAmount(value); motionAmountRef.current = value / 100; }} /></label>}
       <small>{motion === 'sway' ? 'Drift across colors · sound follows' : motion === 'breathe' ? 'Gently expand and settle' : 'Keep circles still'}</small>
     </section>
     <div className={`dockRegion ${sheet ? 'sheetExpanded' : ''}`}>
@@ -584,22 +628,22 @@ export default function App() {
         <header className="sheetHeader"><div><h2 id="sheetTitle">{sheet === 'mix' ? 'The mix' : INSTRUMENTS.find(i => i.id === sheet)?.label}</h2></div><button onClick={() => setSheet(null)} aria-label="Close controls">✕</button></header>
         {sheet === 'keys' && <div className="instrumentModule keysModule"><strong>🎹 Keyboard</strong>
           {([['keys', 'Volume', 'Sets the level of every keyboard circle.'], ['keysTone', 'Tone', 'Moves from soft keys to a brighter synth.'],
-            ['keysSustain', 'Sustain', 'Controls how long keyboard notes ring.'], ['keysDelay', 'Delay', 'Sends keyboard notes into the echo.']] as const).map(([key, label, help]) =>
+            ['keysSustain', 'Note length', 'Controls how long keyboard notes ring.']] as const).map(([key, label, help]) =>
             <label key={key}><span>{label} <output>{controls[key]}%</output></span><small>{help}</small>
               <Slider value={controls[key]} onChange={(value) => setControl(key, value)} /></label>)}</div>}
         {sheet === 'guitar' && <div className="instrumentModule guitarModule"><strong>🎸 Guitar</strong>
           {([['guitar', 'Volume', 'Sets the level of every guitar circle.'], ['guitarTone', 'Tone', 'Moves from mellow plucks to brighter strings.'],
-            ['guitarStrum', 'Strum', 'Controls chord size, rhythm and note length.'], ['guitarDelay', 'Delay', 'Sends guitar plucks into the echo.']] as const).map(([key, label, help]) =>
+            ['guitarStrum', 'Note length', 'Controls how long guitar notes ring.']] as const).map(([key, label, help]) =>
             <label key={key}><span>{label} <output>{controls[key]}%</output></span><small>{help}</small>
               <Slider value={controls[key]} onChange={(value) => setControl(key, value)} /></label>)}</div>}
         {sheet === 'bass' && <div className="instrumentModule bassModule"><strong>🎸 Bass</strong>
           {([['bass', 'Volume', 'Sets the level of every bass circle.'], ['bassDepth', 'Depth', 'Pushes bass notes into a lower register.'],
-            ['bassMovement', 'Movement', 'Adds faster notes and melodic variation.'], ['bassDelay', 'Delay', 'Sends bass notes into the echo.']] as const).map(([key, label, help]) =>
+            ['bassMovement', 'Movement', 'Adds beat-aligned bass notes.']] as const).map(([key, label, help]) =>
             <label key={key}><span>{label} <output>{controls[key]}%</output></span><small>{help}</small>
               <Slider value={controls[key]} onChange={(value) => setControl(key, value)} /></label>)}</div>}
         {sheet === 'drums' && <div className="instrumentModule drumsModule"><strong>🥁 Percussion</strong>
           {([['drums', 'Volume', 'Sets the overall drum level.'], ['drumPunch', 'Punch', 'Strengthens kick impact and snare body.'],
-            ['drumDensity', 'Density', 'Adds more subdivisions to bright percussion circles.'], ['drumDelay', 'Delay', 'Sends drum hits into the echo.']] as const).map(([key, label, help]) =>
+            ['drumDensity', 'Detail', 'Adds subdivisions to bright percussion circles.']] as const).map(([key, label, help]) =>
             <label key={key}><span>{label} <output>{controls[key]}%</output></span><small>{help}</small>
               <Slider value={controls[key]} onChange={(value) => setControl(key, value)} /></label>)}
           <button className={`floorToggle ${fourOnFloor ? 'selected' : ''}`}
@@ -607,17 +651,12 @@ export default function App() {
             <span>Four-on-the-floor</span><small>{fourOnFloor ? 'On · kick plays every beat' : 'Off · kick follows the image pattern'}</small>
           </button>
         </div>}
-        {sheet === 'mix' && <div className="instrumentModule globalModule"><strong>Composition</strong>
-          <label><span>Tempo <output>{controls.tempo} BPM</output></span><small>Sets the speed of the loop.</small>
-            <Slider min={55} max={160} value={controls.tempo} onChange={(value) => setControl('tempo', value)} /></label>
-          <label><span>Pitch <output>{controls.pitch > 0 ? '+' : ''}{controls.pitch} st</output></span><small>Transposes the complete arrangement.</small>
-            <Slider min={-12} max={12} value={controls.pitch} onChange={(value) => setControl('pitch', value)} /></label>
-          <label><span>Variation <output>{controls.complexity}%</output></span><small>Moves from spacious patterns to busier phrases.</small>
-            <Slider value={controls.complexity} onChange={(value) => setControl('complexity', value)} /></label>
-          <label><span>Space <output>{controls.space}%</output></span><small>Adds echo and atmospheric depth.</small>
-            <Slider value={controls.space} onChange={(value) => setControl('space', value)} /></label></div>}
+        {sheet === 'mix' && <div className="instrumentModule globalModule"><strong>Instrument balance</strong>
+          {INSTRUMENTS.map(instrument => <label key={instrument.id}><span>{instrument.label} <output>{controls[instrument.id]}%</output></span>
+            <Slider value={controls[instrument.id]} onChange={value => setControl(instrument.id, value)} /></label>)}
+          <small>Each instrument shares the photo’s harmony and pulse. Delay stays at 0%.</small>
+        </div>}
 
-        {sheet === 'mix' && <label className="sizeControl"><span>Circle size <output>{radius}px</output></span><Slider min={28} max={90} value={radius} onChange={setRadius} /><small>Larger circles sample more color and play louder.</small></label>}
       </div>
     </section>
     </div>
