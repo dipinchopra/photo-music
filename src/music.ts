@@ -1,5 +1,6 @@
 import { composeImage, circleEvent, phraseStep, randomAt, scaleNote, arpeggioDegree, type ArpMode, type Composition } from './composition';
 import { SampleBank, PHOTO_PADS } from './pads';
+import { sampleHarmony, sampleDrumStep } from './harmony';
 
 export type Instrument = 'keys' | 'guitar' | 'bass' | 'drums';
 
@@ -73,12 +74,13 @@ export class ChordEngine {
   private nextStepTime: number | null = null;
   private scheduledTime: number | null = null;
   private hitTimers = new Set<number>();
+  private transportFrames: { step: number; time: number }[] = [];
   private samples = new SampleBank();
   private sampleVoices: { source: AudioBufferSourceNode; gain: GainNode; index: number; repeating: boolean; timer?: number }[] = [];
   private sampleLoops = new Map<number, { placement: Placement; everySteps: number; startStep: number }>();
   get sampleLoopIndices() { return [...this.sampleLoops.keys()]; }
   get hasSampleLoops() { return this.sampleLoops.size > 0; }
-  onSampleHit: ((index: number) => void) | null = null;
+  onSampleHit: ((index: number, placement: Placement) => void) | null = null;
   get samplesReady() { return this.samples.ready; }
 
   async prepareSamples(baseUrl: string) {
@@ -94,12 +96,50 @@ export class ChordEngine {
     if (!buffer || !PHOTO_PADS[index]) return false;
     await this.unlock();
     if (!valid() || !this.running || !this.context || !this.output) return false;
-    return this.startSample(index, placement, this.context.currentTime, false);
+    this.schedule();
+    const now = this.context.currentTime;
+    const when = PHOTO_PADS[index].instrument === 'drums' && (this.placements.length || this.hasSampleLoops)
+      ? this.nextDrumGrid(now) : now;
+    return this.startSample(index, placement, when, false);
+  }
+
+  private transportFrameAt(time: number) {
+    for (let i = this.transportFrames.length - 1; i >= 0; i--) {
+      if (this.transportFrames[i].time <= time + .00001) return this.transportFrames[i];
+    }
+    return undefined;
+  }
+  private harmonyStepAt(time: number) { return this.transportFrameAt(time)?.step ?? this.transportFrames[0]?.step ?? this.step; }
+
+  private nextDrumGrid(now: number) {
+    const current = this.transportFrameAt(now);
+    const next = this.transportFrames.find(frame => frame.time > now + 0.00001)?.time ?? this.nextStepTime;
+    if (!current) return next ?? now;
+    if (Math.abs(current.time - now) < .003) return now;
+    if (next === null) return now;
+    const halfway = (current.time + next) / 2;
+    return now <= halfway ? halfway : next;
   }
 
   private startSample(index: number, placement: Placement, now: number, repeating: boolean) {
     const buffer = this.samples.get(index);
     if (!buffer || !this.context || !this.output) return false;
+    const step = this.harmonyStepAt(now);
+    const plan = sampleHarmony(this.composition, step, index, this.controls.transpose);
+    plan.forEach((note, voiceIndex) => {
+      let offset = 0;
+      for (let i = 0; i < note.offsetBeats * 2; i++) {
+        offset += 30 / this.controls.tempo * (1 + ((step + i + 1) % 2 ? 1 : -1) * this.composition.swing);
+      }
+      this.startSampleVoice(index, placement, now + offset, repeating, note.rate, note.level, voiceIndex === 0);
+    });
+    return true;
+  }
+
+  private startSampleVoice(index: number, placement: Placement, now: number, repeating: boolean,
+    rate: number, level: number, notify: boolean) {
+    const buffer = this.samples.get(index)!;
+    if (!this.context || !this.output) return;
     // Bound rapid multi-finger playing without clipping existing loop voices.
     if (this.sampleVoices.length >= 20) {
       const oldest = this.sampleVoices.shift()!;
@@ -111,11 +151,11 @@ export class ChordEngine {
     const gain = this.context.createGain();
     source.buffer = buffer;
     const instrument = PHOTO_PADS[index].instrument;
-    source.playbackRate.value = instrument === 'drums' ? 1 : Math.pow(2, this.controls.transpose / 12);
+    source.playbackRate.value = rate;
     filter.type = 'lowpass';
     filter.frequency.value = 1800 + placement.tone.brightness * 11000;
     const volume = this.controls[instrument];
-    gain.gain.value = volume * (0.58 + placement.tone.saturation * 0.18);
+    gain.gain.value = volume * (0.58 + placement.tone.saturation * 0.18) * level;
     source.connect(filter); filter.connect(gain); gain.connect(this.output);
     const voice: (typeof this.sampleVoices)[number] = { source, gain, index, repeating };
     this.sampleVoices.push(voice);
@@ -125,12 +165,13 @@ export class ChordEngine {
       this.sampleVoices = this.sampleVoices.filter(item => item !== voice);
     });
     source.start(now);
+    if (!notify) return;
     const wait = (now - this.context.currentTime) * 1000;
-    if (wait < 5) this.onSampleHit?.(index);
+    if (wait < 5) this.onSampleHit?.(index, placement);
     else {
       voice.timer = window.setTimeout(() => {
         this.hitTimers.delete(voice.timer!); voice.timer = undefined;
-        this.onSampleHit?.(index);
+        this.onSampleHit?.(index, placement);
       }, wait);
       this.hitTimers.add(voice.timer);
     }
@@ -232,6 +273,7 @@ export class ChordEngine {
     this.variation = randomAt(composition.seed, 3);
     this.step = 0;
     this.nextStepTime = null;
+    this.transportFrames = [];
     this.keyHistory.clear();
     this.updateSpace();
   }
@@ -463,6 +505,8 @@ export class ChordEngine {
   pulse(atTime?: number): Instrument[] {
     if ((!this.placements.length && !this.hasSampleLoops) || !this.running) return [];
     this.scheduledTime = atTime ?? this.context!.currentTime;
+    this.transportFrames.push({ step: this.step, time: this.scheduledTime });
+    if (this.transportFrames.length > 128) this.transportFrames.shift();
     this.soundingPlacement = null;
     const hits = new Set<Instrument>();
     const composition = this.composition;
@@ -472,7 +516,10 @@ export class ChordEngine {
     const noteAt = (degree: number, register: number) =>
       hz(scaleNote(composition, degree) + this.controls.transpose + register);
     this.sampleLoops.forEach((loop, index) => {
-      if (this.step >= loop.startStep && (this.step - loop.startStep) % loop.everySteps === 0) {
+      const active = PHOTO_PADS[index].instrument === 'drums'
+        ? sampleDrumStep(index, this.step, this.controls.fourOnFloor, this.controls.drumDensity)
+        : (this.step - loop.startStep) % loop.everySteps === 0;
+      if (this.step >= loop.startStep && active) {
         this.startSample(index, loop.placement, this.scheduledTime!, true);
       }
     });
@@ -621,6 +668,7 @@ export class ChordEngine {
   }
 
   stop(release = 0.12, preserveSampleLoops = false) {
+    this.transportFrames = [];
     if (preserveSampleLoops) this.sampleLoops.forEach(loop => { loop.startStep = this.step; });
     else this.sampleLoops.clear();
     this.sampleVoices = [];

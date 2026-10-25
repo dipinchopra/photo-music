@@ -209,7 +209,7 @@ export default function App() {
 
   useEffect(() => {
     music.onPlacementHit = id => visualHitsRef.current.set(id, 1);
-    music.onSampleHit = pad => padHitsRef.current.set(pad, { pad, started: performance.now() / 1000 });
+    music.onSampleHit = (pad, placement) => padHitsRef.current.set(pad, { pad, tone: placement.tone, started: performance.now() / 1000 });
     const canvas = canvasRef.current;
     const prevent = (event: Event) => event.preventDefault();
     canvas?.addEventListener('touchstart', prevent, { passive: false });
@@ -264,7 +264,7 @@ export default function App() {
     const visualTime = motionRef.current === 'off' ? 0 : motionSecondsRef.current;
     const renderVisuals = (target: CanvasRenderingContext2D, scale: number) => {
       padHitsRef.current.forEach(hit => drawPadHit(target, photo,
-        { x: dx / dpr, y: dy / dpr, width: dw / dpr, height: dh / dpr }, hit, now / 1000, scale));
+        { x: dx / dpr, y: dy / dpr, width: dw / dpr, height: dh / dpr }, hit, now / 1000, scale, visualModeRef.current));
       drawnPlacements.forEach(placement => {
       const color = INSTRUMENTS.find(item => item.id === placement.instrument)!.color;
       drawVisual(target, photo, { x: dx / dpr, y: dy / dpr, width: dw / dpr, height: dh / dpr },
@@ -667,7 +667,7 @@ export default function App() {
       </div>
     </header>
     {audioPaused && <div className="recordMessage" role="status"><span>Audio paused</span><button onClick={() => void resumePlayback()}>Resume sound ▶</button></div>}
-    {hasImage && <div className="recordMessage"><span>{mode === 'live' ? 'Dusk · 16 original sample pads' : imageStyle}</span><span>{mode === 'live' ? (kitStatus === 'ready' ? (sampleTrigger === 'loop' ? 'Loop · tap again to stop' : 'One-shot · tap or swipe') : kitStatus === 'error' ? 'Kit failed · tap Play live to retry' : 'Loading samples…') : `${controls.tempo} BPM`}</span></div>}
+    {hasImage && <div className="recordMessage"><span>{mode === 'live' ? 'Dusk · harmonized sample pads' : imageStyle}</span><span>{mode === 'live' ? (kitStatus === 'ready' ? (sampleTrigger === 'loop' ? 'Loop · tap again to stop' : 'One-shot · tap or swipe') : kitStatus === 'error' ? 'Kit failed · tap Play live to retry' : 'Loading samples…') : `${controls.tempo} BPM`}</span></div>}
     {recordError && <div className="recordMessage" role="alert">{recordError}</div>}
     {recordingUrl && <div className="recordMessage"><a href={recordingUrl} download={`image-music.${recordingType.includes('mp4') ? 'mp4' : 'webm'}`}>↓ Save recording</a><button onClick={() => { URL.revokeObjectURL(recordingUrl); setRecordingUrl(null); }}>Dismiss</button></div>}
 
@@ -794,9 +794,9 @@ export default function App() {
         onClick={() => void triggerPad(index)}>
         <span className="instrumentGlyph" aria-hidden="true">{PAD_KEYS[index].toUpperCase()}</span><span>{pad.name}</span>
       </button>)}
-      {mode === 'place' && <button className={`visualsButton ${sheet === 'visuals' ? 'active' : ''}`} aria-controls="instrumentSheet" aria-expanded={sheet === 'visuals'} onClick={() => openSheet('visuals')}>
+      <button className={`visualsButton ${sheet === 'visuals' ? 'active' : ''}`} aria-controls="instrumentSheet" aria-expanded={sheet === 'visuals'} onClick={() => openSheet('visuals')}>
         <span className="instrumentGlyph" aria-hidden="true">◈</span><span>Visuals</span>
-      </button>}
+      </button>
       {mode === 'place' && <button className={`motionButton ${sheet === 'motion' ? 'active' : ''}`} aria-label={`Motion controls, ${motion}`}
         aria-controls="instrumentSheet" aria-expanded={sheet === 'motion'} onClick={() => openSheet('motion')}>
         <span className="instrumentGlyph" aria-hidden="true">∿</span><span>Motion</span>{motion !== 'off' && <i />}
@@ -877,7 +877,7 @@ export default function App() {
             <Slider value={controls.space} onChange={(value) => setControl('space', value)} /></label></div>}
 
         {sheet === 'mix' && mode === 'live' && <div className="liveMixControls">
-          <label><span>Loop repeats</span><select value={repeatBeats} onChange={event => setRepeatBeats(Number(event.target.value))}><option value={1}>Every beat</option><option value={4}>Every bar · 4 beats</option></select><small>Applies to the next sample you loop.</small></label>
+          <label><span>Loop repeats</span><select value={repeatBeats} onChange={event => setRepeatBeats(Number(event.target.value))}><option value={1}>Every beat</option><option value={4}>Every bar · 4 beats</option></select><small>Melodic pads repeat at this rate. Drums follow the groove.</small></label>
           <label><span>Tempo <output>{controls.tempo} BPM</output></span><Slider min={55} max={160} value={controls.tempo} onChange={value => setControl('tempo', value)} /></label>
           {([['keys', 'Chords'], ['guitar', 'Textures'], ['bass', 'Bass'], ['drums', 'Drums']] as const).map(([key, label]) => <label key={key}><span>{label} <output>{controls[key]}%</output></span><Slider value={controls[key]} onChange={value => setControl(key, value)} /></label>)}
           <label><span>Pitch <output>{controls.pitch > 0 ? '+' : ''}{controls.pitch} st</output></span><Slider min={-12} max={12} value={controls.pitch} onChange={value => setControl('pitch', value)} /></label>

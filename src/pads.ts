@@ -1,19 +1,19 @@
 import type { Instrument } from './music';
 import type { Bounds } from './scene';
 
-export const PHOTO_PADS: readonly { file: string; name: string; instrument: Instrument }[] = [
-  { file: 'dusk-chord', name: 'Dusk chord', instrument: 'keys' },
-  { file: 'velvet-chord', name: 'Velvet chord', instrument: 'keys' },
-  { file: 'sun-chord', name: 'Sun chord', instrument: 'keys' },
-  { file: 'glass-pluck', name: 'Glass pluck', instrument: 'keys' },
-  { file: 'nylon-pluck', name: 'Nylon pluck', instrument: 'guitar' },
-  { file: 'air-phrase', name: 'Air phrase', instrument: 'guitar' },
-  { file: 'reverse-glow', name: 'Reverse glow', instrument: 'guitar' },
-  { file: 'grain-shimmer', name: 'Grain shimmer', instrument: 'guitar' },
-  { file: 'deep-sub', name: 'Deep sub', instrument: 'bass' },
-  { file: 'rubber-bass', name: 'Rubber bass', instrument: 'bass' },
-  { file: 'muted-bass', name: 'Muted bass', instrument: 'bass' },
-  { file: 'fall-bass', name: 'Falling bass', instrument: 'bass' },
+export const PHOTO_PADS: readonly { file: string; voiceFile?: string; sourceMidi?: number; register?: number; degrees?: readonly number[]; name: string; instrument: Instrument }[] = [
+  { file: 'dusk-chord', voiceFile: 'dusk-voice', sourceMidi: 50, register: 48, degrees: [0, 2, 4, 6, 8], name: 'Dusk chord', instrument: 'keys' },
+  { file: 'velvet-chord', voiceFile: 'velvet-voice', sourceMidi: 50, register: 48, degrees: [2, 4, 6, 7], name: 'Velvet chord', instrument: 'keys' },
+  { file: 'sun-chord', voiceFile: 'sun-voice', sourceMidi: 50, register: 48, degrees: [0, 4, 8], name: 'Sun chord', instrument: 'keys' },
+  { file: 'glass-pluck', sourceMidi: 74, register: 72, degrees: [4], name: 'Glass pluck', instrument: 'keys' },
+  { file: 'nylon-pluck', sourceMidi: 62, register: 60, degrees: [2], name: 'Nylon pluck', instrument: 'guitar' },
+  { file: 'air-phrase', voiceFile: 'air-voice', sourceMidi: 62, register: 60, degrees: [0, 2, 4, 3], name: 'Air phrase', instrument: 'guitar' },
+  { file: 'reverse-glow', voiceFile: 'reverse-voice', sourceMidi: 50, register: 48, degrees: [0, 2, 4], name: 'Reverse glow', instrument: 'guitar' },
+  { file: 'grain-shimmer', voiceFile: 'grain-voice', sourceMidi: 74, register: 72, degrees: [0], name: 'Grain shimmer', instrument: 'guitar' },
+  { file: 'deep-sub', sourceMidi: 38, register: 36, degrees: [0], name: 'Deep sub', instrument: 'bass' },
+  { file: 'rubber-bass', sourceMidi: 41, register: 36, degrees: [2], name: 'Rubber bass', instrument: 'bass' },
+  { file: 'muted-bass', sourceMidi: 33, register: 24, degrees: [4], name: 'Muted bass', instrument: 'bass' },
+  { file: 'fall-bass', sourceMidi: 38, register: 36, degrees: [0], name: 'Falling bass', instrument: 'bass' },
   { file: 'round-kick', name: 'Round kick', instrument: 'drums' },
   { file: 'dust-snare', name: 'Dust snare', instrument: 'drums' },
   { file: 'soft-hat', name: 'Soft hat', instrument: 'drums' },
@@ -51,7 +51,7 @@ export class SampleBank {
     if (this.pending) return this.pending;
     this.pending = Promise.all(PHOTO_PADS.map(async (pad, index) => {
       if (this.buffers.has(index)) return;
-      const response = await fetch(new URL(`${pad.file}.wav`, baseUrl));
+      const response = await fetch(new URL(`${pad.voiceFile ?? pad.file}.wav`, baseUrl));
       if (!response.ok) throw new Error(`Could not load ${pad.name}`);
       const buffer = await context.decodeAudioData(await response.arrayBuffer());
       this.buffers.set(index, buffer);

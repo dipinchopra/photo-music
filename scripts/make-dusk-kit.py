@@ -1,6 +1,6 @@
 """Deterministic original synthesis. No recordings, downloaded samples, or dependencies.
 Run: python3 scripts/make-dusk-kit.py
-Writes 16 mono PCM WAV one-shots in public/samples/dusk, rooted in D minor.
+Writes 16 mono PCM WAV pad previews and 6 harmonic stems in public/samples/dusk, rooted in D minor.
 """
 from pathlib import Path
 import math, random, struct, wave
@@ -93,4 +93,18 @@ for name,dur,decay in [('soft-hat',.16,52),('hand-shaker',.3,18)]:
         pulse=1 if name=='soft-hat' else .35+.65*abs(sine(19,t))
         data.append((n-low)*pulse*env(t,dur,.002,decay))
     write(name,data,.48)
-print('Generated 16 original one-shots:',sum(p.stat().st_size for p in OUT.glob('*.wav')),'bytes')
+# Monophonic stems allow the live engine to voice chords in the image's scale.
+# Whole-chord transposition alone cannot turn minor thirds into major thirds.
+write('dusk-voice', chord([50],2.2), .68)
+write('velvet-voice', chord([50],1.8), .66)
+write('sun-voice', chord([50],2), .68)
+write('reverse-voice', chord([50],1.7,True), .52)
+dur=.6
+write('air-voice', [(sine(hz(62)*(1+.0018*sine(5.2,i/RATE)),i/RATE)
+    + .12*sine(hz(62)*2,i/RATE) + rng.uniform(-.012,.012))*env(i/RATE,dur,.025,2.4)
+    for i in range(int(dur*RATE))],.58)
+dur=1.25
+write('grain-voice', [(sine(hz(74),i/RATE)*.2 + sine(hz(74)*2,i/RATE)*.06
+    + rng.uniform(-.012,.012))*env(i/RATE,dur,.08,3) for i in range(int(dur*RATE))],.48)
+
+print('Generated 16 pads and 6 harmonic stems:',sum(p.stat().st_size for p in OUT.glob('*.wav')),'bytes')

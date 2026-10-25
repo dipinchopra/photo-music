@@ -5,8 +5,9 @@ import { stripTypeScriptTypes } from 'node:module';
 const encode = source => `data:text/javascript;base64,${Buffer.from(stripTypeScriptTypes(source)).toString('base64')}`;
 const padsUrl = encode(readFileSync(new URL('../src/pads.ts', import.meta.url), 'utf8'));
 const { PHOTO_PADS, PAD_KEYS, SampleBank, photoPadAt, photoPadBounds, enterPhotoPad } = await import(padsUrl);
+const visualsUrl = encode(readFileSync(new URL('../src/visuals.ts', import.meta.url), 'utf8'));
 const { drawPadHit, PAD_EFFECT_SECONDS } = await import(encode(
-  readFileSync(new URL('../src/padVisuals.ts', import.meta.url), 'utf8').replace("'./pads'", JSON.stringify(padsUrl))));
+  readFileSync(new URL('../src/padVisuals.ts', import.meta.url), 'utf8').replace("'./pads'", JSON.stringify(padsUrl)).replace("'./visuals'", JSON.stringify(visualsUrl))));
 
 test('16 photo pads cover the photo once, with stable names and unique keys', () => {
   assert.equal(PHOTO_PADS.length, 16);
@@ -25,10 +26,11 @@ test('16 photo pads cover the photo once, with stable names and unique keys', ()
 
 test('all bundled samples are valid, distinct, bounded PCM with quiet endpoints', () => {
   const dir = new URL('../public/samples/dusk/', import.meta.url);
-  assert.equal(readdirSync(dir).filter(f => f.endsWith('.wav')).length, 16);
+  assert.equal(readdirSync(dir).filter(f => f.endsWith('.wav')).length, 22);
   const signatures = new Set();
   let bytes = 0;
-  for (const pad of PHOTO_PADS) {
+  const files = [...PHOTO_PADS, ...PHOTO_PADS.filter(p => p.voiceFile).map(p => ({file: p.voiceFile, name: p.voiceFile}))];
+  for (const pad of files) {
     const data = readFileSync(new URL(`${pad.file}.wav`, dir)); bytes += data.length;
     assert.equal(data.toString('ascii', 0, 4), 'RIFF');
     assert.equal(data.toString('ascii', 8, 12), 'WAVE');
@@ -42,8 +44,8 @@ test('all bundled samples are valid, distinct, bounded PCM with quiet endpoints'
     assert.equal(data.readInt16LE(44), 0); assert.equal(data.readInt16LE(data.length - 2), 0);
     signatures.add(data.toString('base64'));
   }
-  assert.equal(signatures.size, 16);
-  assert.ok(bytes < 1200000);
+  assert.equal(signatures.size, 22);
+  assert.ok(bytes < 2000000);
 });
 
 test('a failed kit download can be retried; completed sounds are not downloaded again', async () => {
@@ -71,9 +73,9 @@ test('each pad effect clips to its photo cell and ends without persistent decora
   const bounds = {x: 0, y: 0, width: 400, height: 300};
   for (const pad of [0, 4, 8, 12]) {
     const calls = [];
-    const ctx = new Proxy({}, {get: (_, key) => (...args) => calls.push([key, ...args]), set: () => true});
+    const ctx = new Proxy({}, {get: (_, key) => key === 'getTransform' ? () => ({a: 1, b: 0, c: 0, d: 1, e: 0, f: 0}) : (...args) => calls.push([key, ...args]), set: () => true});
     drawPadHit(ctx, {}, bounds, {pad, started: 10}, 10.1, 2);
-    assert.equal(calls.filter(c => c[0] === 'clip').length, 2);
+    assert.ok(calls.some(c => c[0] === 'clip'));
     assert.ok(calls.some(c => c[0] === 'drawImage'));
     assert.equal(calls.filter(c => c[0] === 'save').length, calls.filter(c => c[0] === 'restore').length);
     calls.length = 0;
@@ -94,4 +96,19 @@ test('multi-touch presses, swipes and releases trigger once per pad entry withou
   assert.equal(enterPhotoPad(touches, 1, 1), true, 'release and retap triggers again');
   assert.equal(enterPhotoPad(touches, 1, null), false);
   assert.equal(enterPhotoPad(touches, 1, 1), true, 'reentry from outside the photo works');
+});
+
+
+test('live photo hits use every selected visual style and never paint pad labels or a grid', () => {
+  for (const mode of ['living','fragments','ribbons','shapes','collage','displaced','quilt']) {
+    const calls = [];
+    const ctx = new Proxy({}, {get: (_,key) => key === 'getTransform' ? () => ({a:1,b:0,c:0,d:1,e:0,f:0})
+      : key === 'createLinearGradient' ? () => ({addColorStop(){}}) : (...args) => calls.push([key,...args]), set:()=>true});
+    drawPadHit(ctx, {}, {x:0,y:0,width:400,height:300}, {pad:0,started:0}, .2, 1, mode);
+    assert.ok(calls.some(c=>c[0]==='clip'),mode);
+    assert.equal(calls.some(c=>c[0]==='fillText'||c[0]==='strokeRect'),false,mode);
+    if(mode==='quilt')assert.equal(calls.filter(c=>c[0]==='fillRect').length,1);
+    if(mode==='shapes')assert.equal(calls.some(c=>c[0]==='drawImage'),false);
+    if(mode==='collage'||mode==='displaced')assert.equal(calls.filter(c=>c[0]==='drawImage').length,1);
+  }
 });

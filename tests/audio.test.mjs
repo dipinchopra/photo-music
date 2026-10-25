@@ -5,7 +5,9 @@ import { stripTypeScriptTypes } from 'node:module';
 const encode = source => `data:text/javascript;base64,${Buffer.from(stripTypeScriptTypes(source)).toString('base64')}`;
 const compositionUrl = encode(readFileSync(new URL('../src/composition.ts', import.meta.url), 'utf8'));
 const padsUrl = encode(readFileSync(new URL('../src/pads.ts', import.meta.url), 'utf8'));
-const musicSource = readFileSync(new URL('../src/music.ts', import.meta.url), 'utf8').replace("'./composition'", JSON.stringify(compositionUrl)).replace("'./pads'", JSON.stringify(padsUrl));
+const harmonyUrl = encode(readFileSync(new URL('../src/harmony.ts', import.meta.url), 'utf8').replace("'./composition'", JSON.stringify(compositionUrl)).replace("'./pads'", JSON.stringify(padsUrl)));
+const { sampleHarmony } = await import(harmonyUrl);
+const musicSource = readFileSync(new URL('../src/music.ts', import.meta.url), 'utf8').replace("'./composition'", JSON.stringify(compositionUrl)).replace("'./pads'", JSON.stringify(padsUrl)).replace("'./harmony'", JSON.stringify(harmonyUrl));
 const { ChordEngine } = await import(encode(musicSource));
 const { composeImage } = await import(compositionUrl);
 
@@ -292,8 +294,8 @@ test('sample pads preload once, use buffer sources, and route through the record
     assert.ok(shot);
     assert.equal(shot.startTime, context.currentTime);
     assert.equal(context.oscillators.length, oscillators, 'pads trigger rendered samples rather than synth notes');
-    assert.equal(shot.connections[0], context.filters.at(-1));
-    const output = context.filters.at(-1).connections[0].connections[0];
+    assert.ok(context.filters.includes(shot.connections[0]));
+    const output = shot.connections[0].connections[0].connections[0];
     assert.ok(output.connections[0].connections.includes(context.recordingDestination), 'samples reach the recording mix');
     const streams = await engine.recordingStream();
     assert.ok(streams);
@@ -316,7 +318,7 @@ test('image brightness filters sample pads and drum playback stays unpitched', a
     const context = Context.instances.at(-1);
     await engine.playSample(0, { ...placement, tone: { ...cell, brightness: 0.1 } });
     const dark = context.filters.at(-1).frequency.value;
-    assert.equal(context.bufferSources.at(-1).playbackRate.value, 2);
+    assert.equal(context.bufferSources.at(-1).playbackRate.value, sampleHarmony(engine.composition, 0, 0, 12).at(-1).rate);
     await engine.playSample(12, { ...placement, tone: { ...cell, brightness: 0.9 } });
     assert.ok(context.filters.at(-1).frequency.value > dark);
     assert.equal(context.bufferSources.at(-1).playbackRate.value, 1);
@@ -400,7 +402,7 @@ test('sample-only loops repeat by bar, and pause/recovery retains their state', 
     await engine.toggleSampleLoop(0, placement, 4);
     const context = Context.instances.at(-1);
     for (let step = 1; step <= 17; step++) { context.currentTime = step * .25; engine.schedule(); }
-    const times = context.bufferSources.filter(source => source.buffer?.original).map(source => source.startTime);
+    const times = [...new Set(context.bufferSources.filter(source => source.buffer?.original).map(source => source.startTime))];
     assert.equal(times.length, 3);
     assert.ok(Math.abs(times[1] - times[0] - 2) < 1e-9);
     assert.ok(Math.abs(times[2] - times[1] - 2) < 1e-9);
@@ -426,7 +428,7 @@ test('one-shot samples never repeat, and removing a loop cancels its scheduled h
     await engine.playSample(0, placement);
     const context = Context.instances.at(-1);
     for (let i = 1; i < 20; i++) { context.currentTime = i; engine.schedule(); }
-    assert.equal(context.bufferSources.filter(source => source.buffer?.original).length, 1);
+    assert.equal(new Set(context.bufferSources.filter(source => source.buffer?.original).map(source => source.startTime)).size, 1);
     await engine.toggleSampleLoop(1, placement, 4);
     const future = context.bufferSources.at(-1);
     assert.ok(future.startTime > context.currentTime);
@@ -434,4 +436,38 @@ test('one-shot samples never repeat, and removing a loop cancels its scheduled h
     assert.equal(future.stopTime, context.currentTime);
     assert.equal(engine.hitTimers.size, 0);
   } finally { globalThis.fetch = originalFetch; }
+});
+
+test('drum one-shots snap to the running swung sixteenth grid without changing their pitch', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ok:true,arrayBuffer:async()=>new ArrayBuffer(48)});
+  try {
+    const engine = new ChordEngine();
+    engine.setComposition({...composeImage([cell]),swing:.2}); engine.configure({tempo:120});
+    await engine.prepareSamples('https://example.com/samples/'); await engine.playPlacements([placement]);
+    const ctx = Context.instances.at(-1); ctx.currentTime = .1;
+    await engine.playSample(12,placement);
+    const shot = ctx.bufferSources.at(-1);
+    assert.ok(Math.abs(shot.startTime - .17) < 1e-9, 'halfway between swung eighths .02 and .32');
+    assert.equal(shot.playbackRate.value,1);
+  } finally {globalThis.fetch=originalFetch;}
+});
+
+test('live harmony follows the audible chord rather than the scheduler lookahead chord', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ok:true,arrayBuffer:async()=>new ArrayBuffer(48)});
+  try {
+    const engine = new ChordEngine();
+    engine.setComposition({...composeImage([cell]),tonic:0,scale:[0,2,4,5,7,9,11],progression:[0,4],swing:.2});
+    engine.configure({tempo:120}); await engine.prepareSamples('https://example.com/samples/');
+    engine.updatePlacements([placement]); engine.step = 7;
+    const ctx = Context.instances.at(-1); ctx.currentTime=10; engine.schedule();
+    ctx.currentTime=10.16;
+    await engine.playSample(0,placement); // The G chord at 10.22 is already scheduled.
+    let sources=ctx.bufferSources.filter(s=>s.buffer?.original && s.startTime===ctx.currentTime);
+    assert.ok(Math.abs(sources[0].playbackRate.value-Math.pow(2,-2/12))<1e-9, 'C3 is still the audible chord root');
+    ctx.currentTime=10.24; await engine.playSample(0,placement);
+    sources=ctx.bufferSources.filter(s=>s.buffer?.original && s.startTime===ctx.currentTime);
+    assert.ok(Math.abs(sources[0].playbackRate.value-Math.pow(2,5/12))<1e-9, 'G3 follows after the bar change');
+  } finally {globalThis.fetch=originalFetch;}
 });

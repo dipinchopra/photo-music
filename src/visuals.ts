@@ -139,8 +139,9 @@ function drawTile(ctx: CanvasRenderingContext2D, image: CanvasImageSource, bound
 }
 
 export function drawVisual(ctx: CanvasRenderingContext2D, image: CanvasImageSource, bounds: Bounds,
-  placement: Placement, mode: VisualMode, time: number, hit: number, color: string, dpr = 1) {
+  placement: Placement, mode: VisualMode, time: number, hit: number, color: string, dpr = 1, opacity = 1) {
   ctx.save();
+  ctx.globalAlpha = opacity;
   ctx.scale(dpr, dpr);
   ctx.beginPath(); ctx.rect(bounds.x, bounds.y, bounds.width, bounds.height); ctx.clip();
   const { x, y, radius: r, id } = placement;
@@ -156,7 +157,7 @@ export function drawVisual(ctx: CanvasRenderingContext2D, image: CanvasImageSour
       if (inner) ctx.arc(x, y, r * inner, 0, Math.PI * 2, true);
       ctx.clip('evenodd');
       const influence = Math.pow(1 - edge, 1.4);
-      ctx.globalAlpha = Math.min(1, influence * 1.5);
+      ctx.globalAlpha = opacity * Math.min(1, influence * 1.5);
       const flow = Math.sin(time * 0.55 + id * 1.3);
       drawPhoto(ctx, image, bounds, placement, 1 + influence * (0.12 + hit * 0.015),
         flow * r * 0.12 * influence, Math.cos(time * 0.43 + id) * r * 0.08 * influence);
@@ -168,7 +169,7 @@ export function drawVisual(ctx: CanvasRenderingContext2D, image: CanvasImageSour
     ctx.globalCompositeOperation = 'source-over';
     ctx.strokeStyle = color;
     ctx.lineWidth = 1.75;
-    ctx.globalAlpha = 1;
+    ctx.globalAlpha = opacity;
     ctx.stroke();
   } else {
     const outline = visualOutline(placement, mode, time);
@@ -201,10 +202,10 @@ export function drawVisual(ctx: CanvasRenderingContext2D, image: CanvasImageSour
     traceOutline(ctx, outline);
     ctx.lineWidth = 1;
     ctx.strokeStyle = 'rgba(255,255,255,.38)';
-    ctx.globalAlpha = 1;
+    ctx.globalAlpha = opacity;
     ctx.stroke();
     // A small note glint, never a whole-image flash.
-    ctx.globalAlpha = hit * 0.45; ctx.lineWidth = 2; ctx.strokeStyle = color;
+    ctx.globalAlpha = opacity * hit * 0.45; ctx.lineWidth = 2; ctx.strokeStyle = color;
     ctx.beginPath();
     outline.slice(0, Math.max(2, Math.floor(outline.length * 0.16))).forEach((point, i) => i ? ctx.lineTo(point.x, point.y) : ctx.moveTo(point.x, point.y));
     ctx.stroke();
@@ -214,7 +215,7 @@ export function drawVisual(ctx: CanvasRenderingContext2D, image: CanvasImageSour
 
 /** Keep the same + markers visible on screen and in recordings, above effects. */
 export function drawPlacementMarker(ctx: CanvasRenderingContext2D, bounds: Bounds, placement: Placement,
-  color: string, dpr = 1) {
+  color: string, dpr = 1, opacity = 1) {
   ctx.save();
   ctx.scale(dpr, dpr);
   ctx.beginPath(); ctx.rect(bounds.x, bounds.y, bounds.width, bounds.height); ctx.clip();
@@ -233,7 +234,7 @@ export function drawPlacementMarker(ctx: CanvasRenderingContext2D, bounds: Bound
   ctx.beginPath();
   ctx.moveTo(x - arm, y); ctx.lineTo(x + arm, y);
   ctx.moveTo(x, y - arm); ctx.lineTo(x, y + arm);
-  ctx.globalAlpha = 1;
+  ctx.globalAlpha = opacity;
   ctx.strokeStyle = 'rgba(0,0,0,.4)'; ctx.lineWidth = width + Math.max(2, Math.round(1.75 * unit)); ctx.stroke();
   ctx.strokeStyle = color; ctx.lineWidth = width; ctx.stroke();
   ctx.restore();
