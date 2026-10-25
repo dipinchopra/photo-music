@@ -36,7 +36,8 @@ test('every renderer clips to the photo and preserves the musical placement', ()
     drawVisual(context, image, bounds, immutable, mode.id, 3, 0.5, '#8be9fd', 2);
     assert.ok(calls.some(call => call[0] === 'rect' && call[3] === 400 && call[4] === 300));
     assert.ok(calls.some(call => call[0] === 'clip'));
-    assert.ok(calls.some(call => call[0] === 'drawImage'));
+    assert.equal(calls.some(call => call[0] === 'drawImage'), mode.id !== 'shapes',
+      'translucent shapes must not paint opaque photo copies over earlier layers');
     assert.equal(immutable.x, 200); assert.equal(immutable.y, 200);
     assert.equal(calls.filter(call => call[0] === 'save').length, calls.filter(call => call[0] === 'restore').length);
   }

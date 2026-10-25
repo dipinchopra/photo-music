@@ -6,7 +6,7 @@ export const VISUAL_MODES: { id: VisualMode; label: string; description: string 
   { id: 'living', label: 'Living photo', description: 'Soft refraction blends into the photograph. Editing handles stay out of recordings.' },
   { id: 'fragments', label: 'Floating fragments', description: 'Organic pieces of the photo lift and drift together.' },
   { id: 'ribbons', label: 'Photo ribbons', description: 'Strips of the image bend into flowing, layered ribbons.' },
-  { id: 'shapes', label: 'Instrument shapes', description: 'Keys: rounded tiles. Guitar: leaves. Bass: ovals. Drums: diamonds.' },
+  { id: 'shapes', label: 'Instrument shapes', description: 'Translucent instrument colors blend where shapes overlap, like a Venn diagram.' },
 ];
 export type Point = { x: number; y: number };
 
@@ -107,6 +107,18 @@ export function drawVisual(ctx: CanvasRenderingContext2D, image: HTMLImageElemen
         flow * r * 0.12 * influence, Math.cos(time * 0.43 + id) * r * 0.08 * influence);
       ctx.restore();
     }
+  } else if (mode === 'shapes') {
+    // Screen blending combines every layer's color without covering the photo
+    // or replacing earlier shapes. It also makes intersections order independent.
+    traceOutline(ctx, visualOutline(placement, mode, time));
+    ctx.globalCompositeOperation = 'screen';
+    ctx.fillStyle = color;
+    ctx.globalAlpha = 0.42;
+    ctx.fill();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.25;
+    ctx.globalAlpha = 0.65 + hit * 0.15;
+    ctx.stroke();
   } else {
     const outline = visualOutline(placement, mode, time);
     ctx.save();
@@ -136,9 +148,9 @@ export function drawVisual(ctx: CanvasRenderingContext2D, image: HTMLImageElemen
     ctx.fillStyle = sheen; ctx.fillRect(x - r * 1.6, y - r * 1.2, r * 3.2, r * 2.4);
     ctx.restore();
     traceOutline(ctx, outline);
-    ctx.lineWidth = mode === 'shapes' ? 1.5 : 1;
-    ctx.strokeStyle = mode === 'shapes' ? color : 'rgba(255,255,255,.38)';
-    ctx.globalAlpha = mode === 'shapes' ? 0.55 + hit * 0.12 : 1;
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(255,255,255,.38)';
+    ctx.globalAlpha = 1;
     ctx.stroke();
     // A small note glint, never a whole-image flash.
     ctx.globalAlpha = hit * 0.45; ctx.lineWidth = 2; ctx.strokeStyle = color;
