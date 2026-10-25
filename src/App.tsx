@@ -239,7 +239,7 @@ export default function App() {
       if (visualModeRef.current === 'shapes') drawPlacementMarker(target,
         { x: dx / dpr, y: dy / dpr, width: dw / dpr, height: dh / dpr }, placement, color, scale);
       });
-      if (visualModeRef.current !== 'shapes') drawnPlacements.forEach(placement => drawPlacementMarker(target,
+      if (visualModeRef.current !== 'shapes' && visualModeRef.current !== 'living') drawnPlacements.forEach(placement => drawPlacementMarker(target,
         { x: dx / dpr, y: dy / dpr, width: dw / dpr, height: dh / dpr }, placement,
         INSTRUMENTS.find(item => item.id === placement.instrument)!.color, scale));
     };

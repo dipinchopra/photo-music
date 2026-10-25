@@ -41,7 +41,12 @@ test('every renderer clips to the photo and preserves the musical placement', ()
     assert.ok(calls.some(call => call[0] === 'rect' && call[3] === 400 && call[4] === 300));
     assert.ok(calls.some(call => call[0] === 'clip'));
     assert.equal(calls.some(call => call[0] === 'drawImage'), mode.id !== 'shapes',
-      'solid shapes use instrument colors rather than photo copies');
+      'instrument borders do not repaint the photo');
+    if (mode.id === 'shapes') {
+      assert.equal(calls.some(call => call[0] === 'fill' || call[0] === 'fillRect'), false,
+        'instrument shapes must remain border-only');
+      assert.ok(calls.some(call => call[0] === 'stroke'));
+    }
     assert.equal(immutable.x, 200); assert.equal(immutable.y, 200);
     assert.equal(calls.filter(call => call[0] === 'save').length, calls.filter(call => call[0] === 'restore').length);
   }
