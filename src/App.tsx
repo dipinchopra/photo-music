@@ -609,8 +609,11 @@ export default function App() {
       {INSTRUMENTS.map((instrument, index) => <button key={instrument.id}
         style={{ '--instrument-color': instrument.color } as React.CSSProperties}
         className={selected === instrument.id ? 'active' : ''}
-        aria-label={`${instrument.label.slice(3)} controls`} aria-pressed={selected === instrument.id} aria-controls="instrumentSheet" aria-expanded={sheet === instrument.id}
-        onClick={() => openSheet(instrument.id)}>
+        aria-label={selected === instrument.id ? `Open ${instrument.id} controls` : `Select ${instrument.id}`} title={selected === instrument.id ? 'Tap again for controls' : 'Select instrument'} aria-pressed={selected === instrument.id} aria-controls="instrumentSheet" aria-expanded={sheet === instrument.id}
+        onClick={() => {
+          if (selected === instrument.id) openSheet(instrument.id);
+          else { setSelected(instrument.id); setSheet(null); }
+        }}>
         <span className="instrumentGlyph" aria-hidden="true">{['▥', '≋', '⌁', '⠿'][index]}</span>
         <span>{['Keys', 'Guitar', 'Bass', 'Drums'][index]}</span><i />
       </button>)}
