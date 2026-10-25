@@ -51,7 +51,7 @@ test('switching motion or amount from the visible pose never jumps, including at
   for (const position of [circle, { ...circle, x: 2, y: 89 }, { ...circle, x: 398, y: 311 }]) {
     for (const previous of ['off', 'breathe', 'sway']) {
       for (const next of ['off', 'breathe', 'sway']) {
-        for (const amount of [0, 0.25, 0.55, 1]) {
+        for (const amount of [0, 0.25, 0.55, 1, 2, 3]) {
           const visible = moveCircle(position, previous, 4.2, bounds, 0.55);
           const continued = moveCircle(visible, next, 0, bounds, amount);
           assert.deepEqual(continued, visible, `${previous} to ${next}, amount ${amount}`);

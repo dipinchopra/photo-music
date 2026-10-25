@@ -69,10 +69,11 @@ export function hitVisual(placement: Placement, mode: VisualMode, x: number, y: 
   return inside || edgeDistance(points, x, y) <= 5;
 }
 
-/** Only the selected instrument is editable; other instruments remain layerable. */
+/** Never reach through another instrument to remove a shape underneath it. */
 export function findEditablePlacement(placements: Placement[], instrument: Placement['instrument'], mode: VisualMode,
   x: number, y: number, time = 0) {
-  return [...placements].reverse().find(placement => placement.instrument === instrument && hitVisual(placement, mode, x, y, time));
+  const top = [...placements].reverse().find(placement => hitVisual(placement, mode, x, y, time));
+  return top?.instrument === instrument ? top : undefined;
 }
 
 function drawPhoto(ctx: CanvasRenderingContext2D, image: HTMLImageElement, bounds: Bounds,

@@ -50,7 +50,10 @@ test('tap-to-remove targets only the selected instrument in every visual mode', 
   for (const mode of VISUAL_MODES) {
     assert.equal(findEditablePlacement([piano], 'drums', mode.id, 200, 200), undefined,
       'drums placed over piano must add a layer, never remove piano');
-    assert.equal(findEditablePlacement([piano, drums], 'keys', mode.id, 200, 200)?.id, 1);
+    assert.equal(findEditablePlacement([piano, drums], 'keys', mode.id, 200, 200), undefined,
+      'adding keys on top of drums must not reach through and remove the older keys');
+    assert.equal(findEditablePlacement([drums, piano], 'drums', mode.id, 200, 200), undefined);
+    assert.equal(findEditablePlacement([drums, piano], 'keys', mode.id, 200, 200)?.id, 1);
     assert.equal(findEditablePlacement([piano, drums], 'drums', mode.id, 200, 200)?.id, 2);
     assert.equal(findEditablePlacement([piano, drums], 'guitar', mode.id, 200, 200), undefined);
   }

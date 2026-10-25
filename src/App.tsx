@@ -539,6 +539,8 @@ export default function App() {
               void playLiveAt(e.clientX, e.clientY, e.pointerId);
               return;
             }
+            dragRef.current = null;
+            pointerStartRef.current = null;
             const point = canvasPoint(e.clientX, e.clientY);
             const hit = findEditablePlacement(scenePlacements(), selected, visualModeRef.current,
               point.x, point.y, motionRef.current === 'off' ? 0 : motionSecondsRef.current);
@@ -662,7 +664,7 @@ export default function App() {
       </div>
       <small>{motion === 'sway' ? 'Drift across colors · sound follows' : motion === 'breathe' ? 'Gently expand and settle' : 'Keep circles still'}</small>
       <label className="sizeControl"><span>Amount <output>{motionAmount}%</output></span>
-        <Slider value={motionAmount} onChange={value => changeMotion(motionRef.current, value / 100)} /></label>
+        <Slider max={300} value={motionAmount} onChange={value => changeMotion(motionRef.current, value / 100)} /></label>
     </div>}
         {sheet === 'keys' && <div className="instrumentModule keysModule"><strong>🎹 Keyboard</strong>
           {([['keys', 'Volume', 'Sets the level of every keyboard circle.'], ['keysTone', 'Tone', 'Moves from soft keys to a brighter synth.'],
