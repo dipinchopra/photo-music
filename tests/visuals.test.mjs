@@ -6,7 +6,7 @@ const source = stripTypeScriptTypes(readFileSync(new URL('../src/visuals.ts', im
 const { VISUAL_MODES, visualOutline, hitVisual, findEditablePlacement, drawVisual } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 const placement = { id: 1, x: 200, y: 200, radius: 50, instrument: 'keys' };
 
-test('all four treatments have distinct outlines and valid hit targets', () => {
+test('all four treatments have valid hit targets; Keys shares the living circle outline', () => {
   assert.equal(VISUAL_MODES.length, 4);
   const outlines = new Set();
   for (const mode of VISUAL_MODES) {
@@ -17,7 +17,10 @@ test('all four treatments have distinct outlines and valid hit targets', () => {
     assert.equal(hitVisual(placement, mode.id, 900, 900), false);
 
   }
-  assert.equal(outlines.size, 4);
+  assert.equal(outlines.size, 3);
+  for (const point of visualOutline(placement, 'shapes')) {
+    assert.ok(Math.abs(Math.hypot(point.x - placement.x, point.y - placement.y) - placement.radius) < 1e-9);
+  }
 });
 test('instrument shapes differ and hit testing follows elongated edges', () => {
   const outlines = ['keys', 'guitar', 'bass', 'drums'].map(instrument => JSON.stringify(visualOutline({ ...placement, instrument }, 'shapes')));
