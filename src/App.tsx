@@ -35,6 +35,20 @@ export default function App() {
   } | null>(null);
   const nextIdRef = useRef(1);
 
+  const sheetDragStart = useRef<number | null>(null);
+  const [sheet, setSheet] = useState<Instrument | 'mix' | null>(null);
+  const openSheet = (value: Instrument | 'mix') => {
+    if (value !== 'mix') setSelected(value);
+    setSheet(current => current === value ? null : value);
+  };
+
+  useEffect(() => {
+    if (!sheet) return;
+    const dismiss = (event: KeyboardEvent) => { if (event.key === 'Escape') setSheet(null); };
+    window.addEventListener('keydown', dismiss);
+    return () => window.removeEventListener('keydown', dismiss);
+  }, [sheet]);
+
   const [hasImage, setHasImage] = useState(false);
   const [placements, setPlacements] = useState<Placement[]>([]);
   const [selected, setSelected] = useState<Instrument>('keys');
@@ -319,76 +333,16 @@ export default function App() {
 
   return <main className="app">
     <header className="topbar">
-      <div><div className="eyebrow">PHOTO COMPOSER</div><h1>Build a photo loop</h1></div>
-      <label className="uploadButton">{hasImage ? 'Change image' : 'Upload image'}
+      <div><div className="eyebrow">IMAGE / MUSIC</div><h1>Make colors sing.</h1></div>
+      <label className="uploadButton">{hasImage ? '↗ Change photo' : '↗ Add photo'}
         <input type="file" accept="image/*" onChange={(e) => upload(e.target.files?.[0])} />
       </label>
     </header>
 
     <div className="instrument composer">
-      <section className="controls composerControls" aria-label="Composer controls">
-        <div className="controlGroup">
-          <strong>1. Choose how to play</strong>
-          <div className="modePicker">
-            <button className={mode === 'place' ? 'selected' : ''} onClick={() => { stopLive(); setMode('place'); }}>Place loops</button>
-            <button className={mode === 'live' ? 'selected' : ''} onClick={() => setMode('live')}>Live cursor</button>
-          </div>
-          <strong>2. Choose an instrument</strong>
-          <div className="instrumentPicker">
-            {INSTRUMENTS.map((instrument) => <button key={instrument.id}
-              className={selected === instrument.id ? 'selected' : ''}
-              style={{ '--instrument-color': instrument.color } as React.CSSProperties}
-              onClick={() => setSelected(instrument.id)}>{instrument.label}</button>)}
-          </div>
-        </div>
-        <label><span>Circle size <output>{radius}px</output></span>
-          <small>Larger circles sample more of the photo and play louder.</small>
-          <Slider min={28} max={90} value={radius} onChange={setRadius} />
-        </label>
-        <div className="placementActions">
-          <button disabled={!placements.length} onClick={() => updatePlacements(placementsRef.current.slice(0, -1))}>Undo</button>
-          <button disabled={!placements.length} onClick={() => updatePlacements([])}>Clear</button>
-          <span>{placements.length} placed</span>
-        </div>
-        <small className="loopHint">Tap a placed circle to remove it from the loop.</small>
-        <div className="instrumentModule keysModule"><strong>🎹 Keyboard</strong>
-          {([['keys', 'Volume', 'Sets the level of every keyboard circle.'], ['keysTone', 'Tone', 'Moves from soft keys to a brighter synth.'],
-            ['keysSustain', 'Sustain', 'Controls how long keyboard notes ring.'], ['keysDelay', 'Delay', 'Sends keyboard notes into the echo.']] as const).map(([key, label, help]) =>
-            <label key={key}><span>{label} <output>{controls[key]}%</output></span><small>{help}</small>
-              <Slider value={controls[key]} onChange={(value) => setControl(key, value)} /></label>)}</div>
-        <div className="instrumentModule guitarModule"><strong>🎸 Guitar</strong>
-          {([['guitar', 'Volume', 'Sets the level of every guitar circle.'], ['guitarTone', 'Tone', 'Moves from mellow plucks to brighter strings.'],
-            ['guitarStrum', 'Strum', 'Controls chord size, rhythm and note length.'], ['guitarDelay', 'Delay', 'Sends guitar plucks into the echo.']] as const).map(([key, label, help]) =>
-            <label key={key}><span>{label} <output>{controls[key]}%</output></span><small>{help}</small>
-              <Slider value={controls[key]} onChange={(value) => setControl(key, value)} /></label>)}</div>
-        <div className="instrumentModule bassModule"><strong>🎸 Bass</strong>
-          {([['bass', 'Volume', 'Sets the level of every bass circle.'], ['bassDepth', 'Depth', 'Pushes bass notes into a lower register.'],
-            ['bassMovement', 'Movement', 'Adds faster notes and melodic variation.'], ['bassDelay', 'Delay', 'Sends bass notes into the echo.']] as const).map(([key, label, help]) =>
-            <label key={key}><span>{label} <output>{controls[key]}%</output></span><small>{help}</small>
-              <Slider value={controls[key]} onChange={(value) => setControl(key, value)} /></label>)}</div>
-        <div className="instrumentModule drumsModule"><strong>🥁 Percussion</strong>
-          {([['drums', 'Volume', 'Sets the overall drum level.'], ['drumPunch', 'Punch', 'Strengthens kick impact and snare body.'],
-            ['drumDensity', 'Density', 'Adds more subdivisions to bright percussion circles.'], ['drumDelay', 'Delay', 'Sends drum hits into the echo.']] as const).map(([key, label, help]) =>
-            <label key={key}><span>{label} <output>{controls[key]}%</output></span><small>{help}</small>
-              <Slider value={controls[key]} onChange={(value) => setControl(key, value)} /></label>)}
-          <button className={`floorToggle ${fourOnFloor ? 'selected' : ''}`}
-            aria-pressed={fourOnFloor} onClick={() => setFourOnFloor((value) => !value)}>
-            <span>Four-on-the-floor</span><small>{fourOnFloor ? 'On · kick plays every beat' : 'Off · kick follows the image pattern'}</small>
-          </button>
-        </div>
-        <div className="instrumentModule globalModule"><strong>Composition</strong>
-          <label><span>Tempo <output>{controls.tempo} BPM</output></span><small>Sets the speed of the loop.</small>
-            <Slider min={55} max={160} value={controls.tempo} onChange={(value) => setControl('tempo', value)} /></label>
-          <label><span>Pitch <output>{controls.pitch > 0 ? '+' : ''}{controls.pitch} st</output></span><small>Transposes the complete arrangement.</small>
-            <Slider min={-12} max={12} value={controls.pitch} onChange={(value) => setControl('pitch', value)} /></label>
-          <label><span>Variation <output>{controls.complexity}%</output></span><small>Moves from spacious patterns to busier phrases.</small>
-            <Slider value={controls.complexity} onChange={(value) => setControl('complexity', value)} /></label>
-          <label><span>Space <output>{controls.space}%</output></span><small>Adds echo and atmospheric depth.</small>
-            <Slider value={controls.space} onChange={(value) => setControl('space', value)} /></label></div>
-      </section>
-
       <section className={`stage ${hasImage ? 'hasImage' : ''}`}>
-        {!hasImage && <label className="emptyState"><strong>Choose a photo</strong><span>Then place instruments onto its colors and textures.</span>
+        <div className="stageTop"><span><i /> COLOR IS YOUR INSTRUMENT</span><span>{String(placements.length).padStart(2, '0')} LOOPS</span></div>
+        {!hasImage && <label className="emptyState"><div className="orb"><span>＋</span></div><strong>Your photo.<br />Your sound.</strong><span>Turn a moment into something you can hear.</span><b className="emptyCta">Choose a photo ↗</b>
           <input type="file" accept="image/*" onChange={(e) => upload(e.target.files?.[0])} /></label>}
         <canvas ref={canvasRef} className={`canvas placementCanvas ${mode === 'live' ? 'liveCanvas' : ''}`}
           onPointerDown={(e) => {
@@ -456,6 +410,75 @@ export default function App() {
           : 'Choose an instrument, set its size, then tap the photo'}</div>}
       </section>
     </div>
-    <footer><span>Circle size → volume</span><span>Color → notes</span><span>Texture → rhythm</span></footer>
+    <section className="performanceBar" aria-label="Common controls">
+      <div className="modePicker">
+        <button aria-pressed={mode === 'place'} className={mode === 'place' ? 'selected' : ''} onClick={() => { stopLive(); setMode('place'); }}>Place loops</button>
+        <button aria-pressed={mode === 'live'} className={mode === 'live' ? 'selected' : ''} onClick={() => setMode('live')}>Play live</button>
+      </div>
+      <div className="placementActions">
+        <button aria-label="Undo last loop" disabled={!placements.length} onClick={() => updatePlacements(placementsRef.current.slice(0, -1))}>↶ <span>Undo</span></button>
+        <button disabled={!placements.length} onClick={() => updatePlacements([])}>Clear</button>
+      </div>
+    </section>
+    <div className={`dockRegion ${sheet ? 'sheetExpanded' : ''}`}>
+    <nav className="instrumentDock" aria-label="Instruments and mix">
+      {INSTRUMENTS.map((instrument, index) => <button key={instrument.id}
+        style={{ '--instrument-color': instrument.color } as React.CSSProperties}
+        className={selected === instrument.id ? 'active' : ''}
+        aria-label={`${instrument.label.slice(3)} controls`} aria-pressed={selected === instrument.id} aria-controls="instrumentSheet" aria-expanded={sheet === instrument.id}
+        onClick={() => openSheet(instrument.id)}>
+        <span className="instrumentGlyph" aria-hidden="true">{['▥', '≋', '⌁', '⠿'][index]}</span>
+        <span>{['Keys', 'Guitar', 'Bass', 'Drums'][index]}</span><i />
+      </button>)}
+      <button className={`mixButton ${sheet === 'mix' ? 'active' : ''}`} aria-controls="instrumentSheet" aria-expanded={sheet === 'mix'} onClick={() => openSheet('mix')}><span className="instrumentGlyph" aria-hidden="true">☷</span><span>Mix</span><small>{controls.tempo}</small></button>
+    </nav>
+    <section id="instrumentSheet" className={`controlSheet ${sheet ? 'isOpen' : ''}`} inert={!sheet} aria-hidden={!sheet}
+      aria-labelledby="sheetTitle">
+      <div className="sheetContent controls" style={{ '--instrument-color': INSTRUMENTS.find(i => i.id === sheet)?.color || '#d5f78c' } as React.CSSProperties}>
+        <button className="sheetHandle" aria-label="Collapse controls" onClick={() => setSheet(null)}
+          onPointerDown={event => { sheetDragStart.current = event.clientY; event.currentTarget.setPointerCapture(event.pointerId); }}
+          onPointerUp={event => { if (sheetDragStart.current !== null && event.clientY - sheetDragStart.current > 30) setSheet(null); sheetDragStart.current = null; }}
+          onPointerCancel={() => { sheetDragStart.current = null; }}><span /></button>
+        <header className="sheetHeader"><div><div className="eyebrow">{sheet === 'mix' ? 'SHAPE THE WHOLE LOOP' : 'MAKE IT YOUR SOUND'}</div><h2 id="sheetTitle">{sheet === 'mix' ? 'The mix' : INSTRUMENTS.find(i => i.id === sheet)?.label}</h2></div><button onClick={() => setSheet(null)} aria-label="Close controls">✕</button></header>
+        {sheet === 'keys' && <div className="instrumentModule keysModule"><strong>🎹 Keyboard</strong>
+          {([['keys', 'Volume', 'Sets the level of every keyboard circle.'], ['keysTone', 'Tone', 'Moves from soft keys to a brighter synth.'],
+            ['keysSustain', 'Sustain', 'Controls how long keyboard notes ring.'], ['keysDelay', 'Delay', 'Sends keyboard notes into the echo.']] as const).map(([key, label, help]) =>
+            <label key={key}><span>{label} <output>{controls[key]}%</output></span><small>{help}</small>
+              <Slider value={controls[key]} onChange={(value) => setControl(key, value)} /></label>)}</div>}
+        {sheet === 'guitar' && <div className="instrumentModule guitarModule"><strong>🎸 Guitar</strong>
+          {([['guitar', 'Volume', 'Sets the level of every guitar circle.'], ['guitarTone', 'Tone', 'Moves from mellow plucks to brighter strings.'],
+            ['guitarStrum', 'Strum', 'Controls chord size, rhythm and note length.'], ['guitarDelay', 'Delay', 'Sends guitar plucks into the echo.']] as const).map(([key, label, help]) =>
+            <label key={key}><span>{label} <output>{controls[key]}%</output></span><small>{help}</small>
+              <Slider value={controls[key]} onChange={(value) => setControl(key, value)} /></label>)}</div>}
+        {sheet === 'bass' && <div className="instrumentModule bassModule"><strong>🎸 Bass</strong>
+          {([['bass', 'Volume', 'Sets the level of every bass circle.'], ['bassDepth', 'Depth', 'Pushes bass notes into a lower register.'],
+            ['bassMovement', 'Movement', 'Adds faster notes and melodic variation.'], ['bassDelay', 'Delay', 'Sends bass notes into the echo.']] as const).map(([key, label, help]) =>
+            <label key={key}><span>{label} <output>{controls[key]}%</output></span><small>{help}</small>
+              <Slider value={controls[key]} onChange={(value) => setControl(key, value)} /></label>)}</div>}
+        {sheet === 'drums' && <div className="instrumentModule drumsModule"><strong>🥁 Percussion</strong>
+          {([['drums', 'Volume', 'Sets the overall drum level.'], ['drumPunch', 'Punch', 'Strengthens kick impact and snare body.'],
+            ['drumDensity', 'Density', 'Adds more subdivisions to bright percussion circles.'], ['drumDelay', 'Delay', 'Sends drum hits into the echo.']] as const).map(([key, label, help]) =>
+            <label key={key}><span>{label} <output>{controls[key]}%</output></span><small>{help}</small>
+              <Slider value={controls[key]} onChange={(value) => setControl(key, value)} /></label>)}
+          <button className={`floorToggle ${fourOnFloor ? 'selected' : ''}`}
+            aria-pressed={fourOnFloor} onClick={() => setFourOnFloor((value) => !value)}>
+            <span>Four-on-the-floor</span><small>{fourOnFloor ? 'On · kick plays every beat' : 'Off · kick follows the image pattern'}</small>
+          </button>
+        </div>}
+        {sheet === 'mix' && <div className="instrumentModule globalModule"><strong>Composition</strong>
+          <label><span>Tempo <output>{controls.tempo} BPM</output></span><small>Sets the speed of the loop.</small>
+            <Slider min={55} max={160} value={controls.tempo} onChange={(value) => setControl('tempo', value)} /></label>
+          <label><span>Pitch <output>{controls.pitch > 0 ? '+' : ''}{controls.pitch} st</output></span><small>Transposes the complete arrangement.</small>
+            <Slider min={-12} max={12} value={controls.pitch} onChange={(value) => setControl('pitch', value)} /></label>
+          <label><span>Variation <output>{controls.complexity}%</output></span><small>Moves from spacious patterns to busier phrases.</small>
+            <Slider value={controls.complexity} onChange={(value) => setControl('complexity', value)} /></label>
+          <label><span>Space <output>{controls.space}%</output></span><small>Adds echo and atmospheric depth.</small>
+            <Slider value={controls.space} onChange={(value) => setControl('space', value)} /></label></div>}
+
+        {sheet === 'mix' && <label className="sizeControl"><span>Circle size <output>{radius}px</output></span><Slider min={28} max={90} value={radius} onChange={setRadius} /><small>Larger circles sample more color and play louder.</small></label>}
+      </div>
+    </section>
+    </div>
+    <footer><span>SEE IT. HEAR IT. MAKE IT YOURS.</span><span>IMAGE MUSIC ✳</span></footer>
   </main>;
 }
