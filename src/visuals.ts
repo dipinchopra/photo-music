@@ -3,7 +3,7 @@ import type { Bounds } from './scene';
 
 export type VisualMode = 'living' | 'fragments' | 'ribbons' | 'shapes';
 export const VISUAL_MODES: { id: VisualMode; label: string; description: string }[] = [
-  { id: 'living', label: 'Living photo', description: 'Soft refraction blends into the photograph. Editing handles stay out of recordings.' },
+  { id: 'living', label: 'Living photo', description: 'Soft refraction with visible colored shapes, including in recordings.' },
   { id: 'fragments', label: 'Floating fragments', description: 'Organic pieces of the photo lift and drift together.' },
   { id: 'ribbons', label: 'Photo ribbons', description: 'Strips of the image bend into flowing, layered ribbons.' },
   { id: 'shapes', label: 'Instrument shapes', description: 'Translucent instrument colors blend where shapes overlap, like a Venn diagram.' },
@@ -159,7 +159,21 @@ export function drawVisual(ctx: CanvasRenderingContext2D, image: HTMLImageElemen
   ctx.restore();
 }
 
-/** Editing targets are drawn after the recording frame has been copied. */
+/** Draw after all photo effects so overlapping lenses cannot erase outlines. */
+export function drawVisualOutline(ctx: CanvasRenderingContext2D, bounds: Bounds, placement: Placement,
+  mode: VisualMode, time: number, color: string, dpr = 1) {
+  ctx.save();
+  ctx.scale(dpr, dpr);
+  ctx.beginPath(); ctx.rect(bounds.x, bounds.y, bounds.width, bounds.height); ctx.clip();
+  traceOutline(ctx, visualOutline(placement, mode, time));
+  // A dark keyline keeps the shape readable over bright photos; color reads on dark photos.
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = 'rgba(0,0,0,.4)'; ctx.lineWidth = 3.5; ctx.stroke();
+  ctx.strokeStyle = color; ctx.lineWidth = 1.75; ctx.stroke();
+  ctx.restore();
+}
+
+/** Editing targets stay separate from the recorded shape outlines. */
 export function drawLivingHandle(ctx: CanvasRenderingContext2D, placement: Placement, color: string, dpr: number) {
   ctx.save(); ctx.translate(placement.x * dpr, placement.y * dpr);
   ctx.strokeStyle = color; ctx.lineWidth = dpr; ctx.globalAlpha = 0.65;

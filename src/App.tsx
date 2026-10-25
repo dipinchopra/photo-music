@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { sampleAverageColor } from './color';
 import { composeImage, type ArpMode } from './composition';
 import { photoBounds, recordingSize, moveCircle, type Motion } from './scene';
-import { drawVisual, drawLivingHandle, findEditablePlacement, VISUAL_MODES, type VisualMode } from './visuals';
+import { drawVisual, drawVisualOutline, drawLivingHandle, findEditablePlacement, VISUAL_MODES, type VisualMode } from './visuals';
 import { EditHistory } from './history';
 import { PlaybackRecovery } from './playback';
 import { ChordEngine, type Instrument, type Placement } from './music';
@@ -213,11 +213,16 @@ export default function App() {
     const drawnPlacements = [...scenePlacements(), ...livePlacementsRef.current.values()];
 
     const visualTime = motionRef.current === 'off' ? 0 : motionSecondsRef.current;
-    const renderVisuals = (target: CanvasRenderingContext2D, scale: number) => drawnPlacements.forEach(placement => {
+    const renderVisuals = (target: CanvasRenderingContext2D, scale: number) => {
+      drawnPlacements.forEach(placement => {
       const color = INSTRUMENTS.find(item => item.id === placement.instrument)!.color;
       drawVisual(target, image, { x: dx / dpr, y: dy / dpr, width: dw / dpr, height: dh / dpr },
         placement, visualModeRef.current, visualTime, visualHitsRef.current.get(placement.id) ?? 0, color, scale);
-    });
+      });
+      drawnPlacements.forEach(placement => drawVisualOutline(target,
+        { x: dx / dpr, y: dy / dpr, width: dw / dpr, height: dh / dpr }, placement,
+        visualModeRef.current, visualTime, INSTRUMENTS.find(item => item.id === placement.instrument)!.color, scale));
+    };
     renderVisuals(ctx, dpr);
     const cropped = recordingCanvasRef.current;
     const recordingContext = cropped?.getContext('2d');
