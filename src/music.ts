@@ -63,6 +63,7 @@ export class ChordEngine {
   private lastKeyStep = -100;
   private composition: Composition = composeImage([]);
   private variation = 0.5;
+  onPlacementHit: ((id: number) => void) | null = null;
   onPlaybackState: ((running: boolean) => void) | null = null;
 
   get running() { return this.context?.state === 'running'; }
@@ -290,6 +291,7 @@ export class ChordEngine {
       // Let a repeated pitch ring rather than striking it again immediately.
       if (pitch !== this.lastKeyNote || this.step - this.lastKeyStep >= 8) {
         hits.add('keys');
+        this.onPlacementHit?.(placement.id);
         this.lastKeyNote = pitch;
         this.lastKeyStep = this.step;
         const secondsPerStep = 60 / this.controls.tempo / 2;
@@ -304,6 +306,7 @@ export class ChordEngine {
       const phrase = phraseStep(composition, placement.tone, this.step + 3, this.controls.complexity);
       if (!this.controls.guitar || !melodyEvent(composition, this.step, this.controls.guitarStrum).active || index !== melody.voice % guitars.length) return;
       hits.add('guitar');
+      this.onPlacementHit?.(placement.id);
       const degrees = this.controls.guitarStrum > 0.58 ? [root, root + 2, root + 4] : [root + (Math.abs(phrase.degree) % 3) * 2];
       degrees.forEach((degree, index) => {
         const volume = 0.065 * placement.level * this.controls.guitar * phrase.accent / Math.sqrt(guitars.length * degrees.length);
@@ -317,6 +320,7 @@ export class ChordEngine {
       const phrase = phraseStep(composition, placement.tone, this.step, this.controls.bassMovement);
       if (!this.controls.bass || !(beat === 0 || beat === 4 || (phrase.active && this.controls.bassMovement > 0.58))) return;
       hits.add('bass');
+      this.onPlacementHit?.(placement.id);
       const nextRoot = composition.progression[(bar + 1) % composition.progression.length];
       const degree = beat === 7 && this.controls.bassMovement > 0.58 ? nextRoot - 1
         : root + (beat === 4 && this.controls.bassMovement > 0.32 ? 4 : 0);
@@ -341,6 +345,7 @@ export class ChordEngine {
           : this.controls.complexity < 0.35 ? [0, 4] : kickPatterns[variation];
         if (pattern.includes(beat)) {
           hits.add('drums');
+          this.onPlacementHit?.(placement.id);
           this.kick((0.11 + this.controls.drumPunch * 0.14) * volume, this.controls.drumDelay);
         }
       } else if (brightness < 0.68) {
@@ -348,6 +353,7 @@ export class ChordEngine {
         const pattern = this.controls.complexity < 0.35 ? [2, 6] : snarePatterns[variation];
         if (pattern.includes(beat) || (fill && composition.energy > 0.45)) {
           hits.add('drums');
+          this.onPlacementHit?.(placement.id);
           this.snare((0.05 + this.controls.drumPunch * 0.075) * volume,
             placement.tone.saturation, this.controls.drumDelay);
         }
@@ -358,6 +364,7 @@ export class ChordEngine {
         const pattern = placement.tone.texture * 0.35 + this.controls.drumDensity * 0.45 + composition.energy * 0.35 > 0.58 ? dense : sparse;
         if (pattern.includes(beat)) {
           hits.add('drums');
+          this.onPlacementHit?.(placement.id);
           const open = placement.tone.texture > 0.62 && beat === 7;
           this.noise((open ? 0.036 : beat % 2 === 0 ? 0.026 : 0.017) * volume, true, open, this.controls.drumDelay);
         }

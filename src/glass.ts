@@ -3,17 +3,18 @@ type ImageBounds = { x: number; y: number; width: number; height: number };
 /** A shallow lens: gentle magnification with stronger bending at the perimeter. */
 export function refractPhoto(
   ctx: CanvasRenderingContext2D, image: HTMLImageElement, bounds: ImageBounds,
-  x: number, y: number, radius: number, strength: number,
+  x: number, y: number, radius: number,
 ) {
   ctx.save();
   ctx.beginPath();
   ctx.arc(x, y, radius, 0, Math.PI * 2);
   ctx.clip();
   // Concentric annuli approximate the curved edge without per-pixel processing.
-  for (let band = 0; band < 5; band++) {
-    const outer = radius * (1 - band * 0.055);
-    const inner = band === 4 ? 0 : radius * (1 - (band + 1) * 0.055);
-    const zoom = 1.025 + (4 - band) * 0.012 + strength * 0.008;
+  for (let band = 0; band < 16; band++) {
+    const outer = radius * (1 - band / 16);
+    const inner = band === 15 ? 0 : radius * (1 - (band + 1) / 16);
+    const edge = outer / radius;
+    const zoom = 1.1 + Math.pow(edge, 5) * 0.22;
     ctx.save();
     ctx.beginPath();
     ctx.arc(x, y, outer, 0, Math.PI * 2);
@@ -21,7 +22,7 @@ export function refractPhoto(
     ctx.clip('evenodd');
     ctx.translate(x, y);
     ctx.scale(zoom, zoom);
-    ctx.translate(-x, -y);
+    ctx.translate(-x + radius * 0.025, -y + radius * 0.035);
     ctx.drawImage(image, bounds.x, bounds.y, bounds.width, bounds.height);
     ctx.restore();
   }
@@ -37,7 +38,7 @@ export function drawGlassRim(
   ctx.arc(x, y, radius, 0, Math.PI * 2);
   ctx.clip();
   const sheen = ctx.createLinearGradient(x - radius, y - radius, x + radius, y + radius);
-  sheen.addColorStop(0, 'rgba(255,255,255,.24)');
+  sheen.addColorStop(0, 'rgba(255,255,255,.30)');
   sheen.addColorStop(0.3, 'rgba(255,255,255,.035)');
   sheen.addColorStop(0.65, 'rgba(255,255,255,0)');
   sheen.addColorStop(1, 'rgba(255,255,255,.10)');
@@ -55,10 +56,10 @@ export function drawGlassRim(
   ctx.beginPath();
   ctx.arc(x, y, radius, 0, Math.PI * 2);
   ctx.strokeStyle = color;
-  ctx.globalAlpha = 0.65 + strength * 0.2;
+  ctx.globalAlpha = 0.38;
   ctx.lineWidth = 1.2 * dpr;
   ctx.shadowColor = color;
-  ctx.shadowBlur = (3 + strength * 5) * dpr;
+  ctx.shadowBlur = 2 * dpr;
   ctx.stroke();
   ctx.shadowBlur = 0;
   const rim = ctx.createLinearGradient(x - radius, y - radius, x + radius, y + radius);
@@ -72,5 +73,15 @@ export function drawGlassRim(
   ctx.beginPath();
   ctx.arc(x, y, radius - 1.5 * dpr, 0, Math.PI * 2);
   ctx.stroke();
+  // A small rim glint replaces whole-circle flashing.
+  if (strength > 0.01) {
+    ctx.beginPath();
+    const angle = -Math.PI * 0.75 + (1 - strength) * 0.55;
+    ctx.arc(x, y, radius - 1.5 * dpr, angle, angle + Math.PI * 0.38);
+    ctx.globalAlpha = strength * 0.48;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2 * dpr;
+    ctx.stroke();
+  }
   ctx.restore();
 }

@@ -30,9 +30,7 @@ export default function App() {
   const tempoRef = useRef(96);
   const beatProgressRef = useRef(0);
   const beatTimeRef = useRef(0);
-  const pulseRef = useRef(0);
-  const visualHitsRef = useRef<Record<Instrument, number>>({ keys: 0, guitar: 0, bass: 0, drums: 0 });
-  const phaseRef = useRef(0);
+  const visualHitsRef = useRef(new Map<number, number>());
   const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
   const dragRef = useRef<{
     id: number; offsetX: number; offsetY: number; startX: number; startY: number; moved: boolean;
@@ -132,6 +130,19 @@ export default function App() {
     music.stop();
   }, []);
 
+  useEffect(() => {
+    music.onPlacementHit = id => visualHitsRef.current.set(id, 1);
+    const canvas = canvasRef.current;
+    const prevent = (event: Event) => event.preventDefault();
+    canvas?.addEventListener('touchstart', prevent, { passive: false });
+    canvas?.addEventListener('selectstart', prevent);
+    return () => {
+      music.onPlacementHit = null;
+      canvas?.removeEventListener('touchstart', prevent);
+      canvas?.removeEventListener('selectstart', prevent);
+    };
+  }, []);
+
   const draw = () => {
     const canvas = canvasRef.current;
     const image = imageRef.current;
@@ -158,60 +169,12 @@ export default function App() {
 
     drawnPlacements.forEach(placement => {
       refractPhoto(ctx, image, { x: dx, y: dy, width: dw, height: dh },
-        placement.x * dpr, placement.y * dpr, placement.radius * dpr,
-        visualHitsRef.current[placement.instrument]);
+        placement.x * dpr, placement.y * dpr, placement.radius * dpr);
     });
 
     if (drawnPlacements.length) {
-      const hue = drawnPlacements.reduce((sum, item) => sum + item.tone.hue, 0) / drawnPlacements.length;
       ctx.save();
-      ctx.globalCompositeOperation = 'soft-light';
-      ctx.globalAlpha = 0.045 + visualHitsRef.current.keys * 0.025;
-      ctx.fillStyle = `hsl(${hue} 75% 48%)`;
-      ctx.fillRect(0, 0, width, height);
-      ctx.restore();
-
-      drawnPlacements.forEach((placement) => {
-        const strength = visualHitsRef.current[placement.instrument];
-        if (strength < 0.015) return;
-        const x = placement.x * dpr;
-        const y = placement.y * dpr;
-        const r = placement.radius * dpr;
-        ctx.save();
-        ctx.beginPath();
-        ctx.arc(x, y, r, 0, Math.PI * 2);
-        ctx.clip();
-        if (placement.instrument === 'keys') {
-          const offset = (2 + placement.tone.texture * 6) * strength * dpr;
-          ctx.globalCompositeOperation = 'screen';
-          ctx.globalAlpha = 0.12 * strength;
-          ctx.drawImage(image, dx + offset, dy, dw, dh);
-          ctx.drawImage(image, dx - offset, dy, dw, dh);
-        } else if (placement.instrument === 'guitar') {
-          const offset = (1.5 + controls.guitarStrum * 0.035) * strength * dpr;
-          ctx.globalCompositeOperation = 'screen';
-          ctx.globalAlpha = 0.14 * strength;
-          ctx.drawImage(image, dx + offset, dy - offset, dw, dh);
-        } else if (placement.instrument === 'bass') {
-          const scale = 1 + 0.035 * strength;
-          ctx.globalAlpha = 0.48 * strength;
-          ctx.translate(x, y);
-          ctx.scale(scale, scale);
-          ctx.translate(-x, -y);
-          ctx.drawImage(image, dx, dy, dw, dh);
-        } else {
-          const shake = (4 + controls.drumPunch * 0.055) * strength * dpr;
-          ctx.globalCompositeOperation = 'screen';
-          ctx.globalAlpha = 0.2 * strength;
-          ctx.drawImage(image, dx + (phaseRef.current % 2 ? shake : -shake), dy, dw, dh);
-        }
-        ctx.restore();
-      });
-    }
-
-    if (drawnPlacements.length) {
-      ctx.save();
-      ctx.fillStyle = 'rgba(0,0,0,.38)';
+      ctx.fillStyle = 'rgba(0,0,0,.16)';
       ctx.beginPath();
       ctx.rect(0, 0, width, height);
       drawnPlacements.forEach((placement) => {
@@ -228,7 +191,7 @@ export default function App() {
       const y = placement.y * dpr;
       const r = placement.radius * dpr;
       drawGlassRim(ctx, x, y, r, config.color, dpr,
-        visualHitsRef.current[placement.instrument]);
+        visualHitsRef.current.get(placement.id) ?? 0);
     });
   };
 
@@ -243,10 +206,7 @@ export default function App() {
       if (beatProgressRef.current < 1) return;
       // Keep phase between ticks without bursting missed notes after backgrounding.
       beatProgressRef.current %= 1;
-      const hits = music.pulse();
-      hits.forEach((instrument) => { visualHitsRef.current[instrument] = 1; });
-      phaseRef.current = (phaseRef.current + 1) % 8;
-      pulseRef.current = 1;
+      music.pulse();
     }, 16);
   };
 
@@ -286,11 +246,10 @@ export default function App() {
   useEffect(() => {
     let frame = 0;
     const animate = () => {
-      pulseRef.current *= 0.9;
-      visualHitsRef.current.keys *= 0.88;
-      visualHitsRef.current.guitar *= 0.82;
-      visualHitsRef.current.bass *= 0.9;
-      visualHitsRef.current.drums *= 0.76;
+      visualHitsRef.current.forEach((strength, id) => {
+        if (strength < 0.01) visualHitsRef.current.delete(id);
+        else visualHitsRef.current.set(id, strength * 0.95);
+      });
       draw();
       frame = requestAnimationFrame(animate);
     };
@@ -360,7 +319,6 @@ export default function App() {
     setPlacements(next);
     await music.playPlacements(next);
     startBeat();
-    pulseRef.current = 1;
   };
 
   const playLiveAt = async (clientX: number, clientY: number, pointerId: number) => {
@@ -372,7 +330,6 @@ export default function App() {
     livePlacementsRef.current.set(pointerId, placement);
     await music.playPlacements([...placementsRef.current, ...livePlacementsRef.current.values()]);
     if (placementsRef.current.length || livePlacementsRef.current.size) startBeat();
-    pulseRef.current = 1;
   };
 
   const stopLive = (pointerId?: number) => {
@@ -468,7 +425,7 @@ export default function App() {
     image.src = url;
   };
 
-  return <main className="app">
+  return <main className="app" onContextMenu={event => event.preventDefault()}>
     <header className="topbar">
       <div><div className="eyebrow">IMAGE / MUSIC</div><h1>Build a photo loop</h1></div>
       <div className="headerActions">
@@ -488,7 +445,7 @@ export default function App() {
 
         {!hasImage && <label className="emptyState"><div className="orb"><span>＋</span></div><strong>Choose a photo</strong><span>Place instruments onto its colors and textures.</span><b className="emptyCta">Choose a photo ↗</b>
           <input type="file" accept="image/*" onChange={(e) => upload(e.target.files?.[0])} /></label>}
-        <canvas ref={canvasRef} className={`canvas placementCanvas ${mode === 'live' ? 'liveCanvas' : ''}`}
+        <canvas ref={canvasRef} draggable={false} className={`canvas placementCanvas ${mode === 'live' ? 'liveCanvas' : ''}`}
           onContextMenu={e => e.preventDefault()}
           onDragStart={e => e.preventDefault()}
           onPointerDown={(e) => {

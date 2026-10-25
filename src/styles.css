@@ -461,3 +461,10 @@ footer {
 
 .app { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 .canvas, .stage { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+
+html, body, #root, .app, .app * {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+.canvas { -webkit-user-drag: none; }
