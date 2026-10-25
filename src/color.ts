@@ -24,6 +24,7 @@ export function sampleAverageColor(
   x: number,
   y: number,
   radius: number,
+  detailed = true,
 ) {
   const canvas = ctx.canvas;
   const sx = Math.max(0, Math.floor(x - radius));
@@ -63,7 +64,7 @@ export function sampleAverageColor(
 
   let lowEnergy = 0;
   let highEnergy = 0;
-  for (let v = 0; v < size; v++) {
+  for (let v = 0; detailed && v < size; v++) {
     for (let u = 0; u < size; u++) {
       if (u === 0 && v === 0) continue;
       let real = 0;

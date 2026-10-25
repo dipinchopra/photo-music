@@ -30,8 +30,8 @@ test('motion is reversible and circles move independently', () => {
 test('sway remains inside the photo and breathe changes only radius', () => {
   for (let t = 0; t < 60; t += 0.5) {
     const moving = moveCircle({ ...circle, x: 2, y: 89 }, 'sway', t, bounds);
-    assert.ok(moving.x >= 40 && moving.x <= 360);
-    assert.ok(moving.y >= 127.5 && moving.y <= 272.5);
+    assert.ok(moving.x >= 2 && moving.x <= 360);
+    assert.ok(moving.y >= 89 && moving.y <= 272.5);
     const breathing = moveCircle(circle, 'breathe', t, bounds);
     assert.equal(breathing.x, circle.x); assert.equal(breathing.y, circle.y);
     assert.ok(breathing.radius >= 36.4 && breathing.radius <= 43.6);
@@ -44,4 +44,19 @@ test('Motion Amount scales movement and zero keeps the original circle', () => {
   const small = moveCircle(circle, 'sway', 4, bounds, 0.25);
   const large = moveCircle(circle, 'sway', 4, bounds, 1);
   assert.ok(Math.abs((large.x - circle.x) * 0.25 - (small.x - circle.x)) < 1e-9);
+});
+
+
+test('switching motion or amount from the visible pose never jumps, including at photo edges', () => {
+  for (const position of [circle, { ...circle, x: 2, y: 89 }, { ...circle, x: 398, y: 311 }]) {
+    for (const previous of ['off', 'breathe', 'sway']) {
+      for (const next of ['off', 'breathe', 'sway']) {
+        for (const amount of [0, 0.25, 0.55, 1]) {
+          const visible = moveCircle(position, previous, 4.2, bounds, 0.55);
+          const continued = moveCircle(visible, next, 0, bounds, amount);
+          assert.deepEqual(continued, visible, `${previous} to ${next}, amount ${amount}`);
+        }
+      }
+    }
+  }
 });

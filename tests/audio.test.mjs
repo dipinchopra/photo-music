@@ -27,14 +27,14 @@ class Node {
 class Context {
   static instances = [];
   state = 'running'; currentTime = 0; sampleRate = 8000; destination = new Node();
-  oscillators = []; resumeCalls = 0;
+  oscillators = []; filters = []; resumeCalls = 0;
   constructor() { Context.instances.push(this); }
   createGain() { return new Node(); }
   createDelay() { this.delay = new Node(); return this.delay; }
   createDynamicsCompressor() { return new Node(); }
   createMediaStreamDestination() { return { ...new Node(), stream: {} }; }
   createBufferSource() { return new Node(); }
-  createBiquadFilter() { return new Node(); }
+  createBiquadFilter() { const filter = new Node(); this.filters.push(filter); return filter; }
   createBuffer(_channels, length) { return { getChannelData: () => new Float32Array(length) }; }
   createOscillator() { const node = new Node(); this.oscillators.push(node); return node; }
   async resume() { this.resumeCalls++; this.state = 'running'; this.onstatechange?.(); }
@@ -215,4 +215,21 @@ test('Keys and Guitar arpeggiators produce ascending notes at the chosen rate', 
       assert.ok(frequencies[0] < frequencies[1] && frequencies[1] < frequencies[2] && frequencies[2] < frequencies[3]);
     }
   }
+});
+
+
+test('new image samples continuously change ringing voices without retriggering notes', async () => {
+  const engine = new ChordEngine();
+  engine.setComposition({ ...composeImage([cell]), style: 'plucked' });
+  await engine.playPlacements([placement]);
+  const context = Context.instances.at(-1);
+  const cutoff = context.filters[0].frequency.value;
+  const count = context.oscillators.length;
+  engine.updatePlacements([placement]);
+  assert.equal(context.filters[0].frequency.value, cutoff, 'same sampled pixels must not invent modulation');
+  engine.updatePlacements([{ ...placement, tone: { ...cell, brightness: 0.95, saturation: 0.85 } }]);
+  assert.ok(context.filters[0].frequency.value > cutoff, 'a brighter region must update the already-ringing filter');
+  assert.equal(context.oscillators.length, count, 'do not add extra attacks during continuous sampling');
+  engine.updatePlacements([{ ...placement, tone: { ...cell, brightness: 0.05, saturation: 0.1 } }]);
+  assert.ok(context.filters[0].frequency.value < cutoff);
 });

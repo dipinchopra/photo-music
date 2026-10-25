@@ -54,6 +54,8 @@ function hz(semitones: number) {
   return C2 * Math.pow(2, semitones / 12);
 }
 
+type TimbreBinding = { filter: BiquadFilterNode; colourGain: GainNode; cutoff: number; tone: ImageTone };
+
 export class ChordEngine {
   private context: AudioContext | null = null;
   private output: GainNode | null = null;
@@ -65,6 +67,8 @@ export class ChordEngine {
   private activeSources: AudioScheduledSourceNode[] = [];
   private sourceStarts = new WeakMap<AudioScheduledSourceNode, number>();
   private step = 0;
+  private soundingPlacement: Placement | null = null;
+  private timbreBindings = new Map<number, Set<TimbreBinding>>();
   private nextStepTime: number | null = null;
   private scheduledTime: number | null = null;
   private hitTimers = new Set<number>();
@@ -135,6 +139,7 @@ export class ChordEngine {
     if (!this.context || this.context.state === 'closed') {
       this.activeGains = [];
       this.activeSources = [];
+      this.timbreBindings.clear();
       const AudioContextClass = window.AudioContext ||
         (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
       if (!AudioContextClass) return;
@@ -183,6 +188,15 @@ export class ChordEngine {
     this.placements = placements;
     const ids = new Set(placements.map(placement => placement.id));
     this.keyHistory.forEach((_, id) => { if (!ids.has(id)) this.keyHistory.delete(id); });
+    if (this.context) placements.forEach(placement => {
+      this.timbreBindings.get(placement.id)?.forEach(binding => {
+        const colour = (tone: ImageTone) => 0.3 + tone.brightness * 1.1 + tone.saturation * 0.6;
+        const ratio = colour(placement.tone) / colour(binding.tone);
+        binding.filter.frequency.setTargetAtTime(Math.max(100, Math.min(16000, binding.cutoff * ratio)), this.context!.currentTime, 0.04);
+        const level = (0.7 + placement.tone.brightness * 0.6) / (0.7 + binding.tone.brightness * 0.6);
+        binding.colourGain.gain.setTargetAtTime(Math.max(0.6, Math.min(1.4, level)), this.context!.currentTime, 0.04);
+      });
+    });
   }
 
   private tone(frequency: number, volume: number, duration: number, type: OscillatorType,
@@ -192,6 +206,8 @@ export class ChordEngine {
     const osc = this.context.createOscillator();
     const gain = this.context.createGain();
     const filter = this.context.createBiquadFilter();
+    const colourGain = this.context.createGain();
+    colourGain.gain.value = 1;
     osc.type = type;
     osc.frequency.value = frequency;
     filter.type = 'lowpass';
@@ -201,23 +217,39 @@ export class ChordEngine {
     gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
     osc.connect(filter);
     filter.connect(gain);
-    gain.connect(this.output);
+    gain.connect(colourGain);
+    colourGain.connect(this.output);
     if (this.delay && send > 0) {
       const sendGain = this.context.createGain();
       sendGain.gain.value = send;
-      gain.connect(sendGain);
+      colourGain.connect(sendGain);
       sendGain.connect(this.delay);
     }
     osc.start(now);
     osc.stop(now + duration + 0.05);
-    this.trackSource(osc, gain, now);
+    const placement = this.soundingPlacement;
+    const binding = placement ? { filter, colourGain, cutoff, tone: placement.tone } : null;
+    if (placement && binding) {
+      const bindings = this.timbreBindings.get(placement.id) ?? new Set<TimbreBinding>();
+      bindings.add(binding);
+      this.timbreBindings.set(placement.id, bindings);
+    }
+    this.trackSource(osc, gain, now, () => {
+      filter.disconnect(); colourGain.disconnect();
+      if (placement && binding) {
+        const bindings = this.timbreBindings.get(placement.id);
+        bindings?.delete(binding);
+        if (!bindings?.size) this.timbreBindings.delete(placement.id);
+      }
+    });
   }
 
-  private trackSource(source: AudioScheduledSourceNode, gain: GainNode, start: number) {
+  private trackSource(source: AudioScheduledSourceNode, gain: GainNode, start: number, cleanup = () => {}) {
     this.sourceStarts.set(source, start);
     this.activeSources.push(source);
     this.activeGains.push(gain);
     source.onended = () => {
+      cleanup();
       this.activeSources = this.activeSources.filter(item => item !== source);
       this.activeGains = this.activeGains.filter(item => item !== gain);
       source.disconnect();
@@ -313,6 +345,7 @@ export class ChordEngine {
   pulse(atTime?: number): Instrument[] {
     if (!this.placements.length || !this.running) return [];
     this.scheduledTime = atTime ?? this.context!.currentTime;
+    this.soundingPlacement = null;
     const hits = new Set<Instrument>();
     const composition = this.composition;
     const bar = Math.floor(this.step / 8);
@@ -340,6 +373,7 @@ export class ChordEngine {
     for (let voice = 0; voice < keys.length; voice++) {
       const lane = (voice + Math.floor(this.step / 2)) % keys.length;
       const placement = keys[lane];
+      this.soundingPlacement = placement;
       const melody = circleEvent(composition, placement.tone, this.step, this.controls.complexity, lane, placement.radius);
       const previous = this.keyHistory.get(placement.id);
       const arpeggiating = this.controls.keysArp !== 'off';
@@ -368,6 +402,7 @@ export class ChordEngine {
     for (let voice = 0; voice < guitars.length; voice++) {
       const lane = (voice + Math.floor(this.step / 2)) % guitars.length;
       const placement = guitars[lane];
+      this.soundingPlacement = placement;
       const event = circleEvent(composition, placement.tone, this.step, this.controls.complexity, lane, placement.radius);
       const arpeggiating = this.controls.guitarArp !== 'off';
       const active = arpeggiating ? this.step % this.controls.guitarArpRate === 0 : event.active;
@@ -394,6 +429,7 @@ export class ChordEngine {
     for (let voice = 0; voice < bass.length; voice++) {
       const lane = (voice + Math.floor(this.step / 2)) % bass.length;
       const placement = bass[lane];
+      this.soundingPlacement = placement;
       const bassBeat = beat === 0 || beat === 4 || (this.controls.bassMovement > 0.32 && this.controls.complexity > 0.25 && (beat === 2 || beat === 6))
         || (this.controls.bassMovement > 0.75 && beat === 7 && bar % 4 === 3);
       if (!this.controls.bass || !bassBeat || bassAttacks >= 1) continue;
@@ -413,6 +449,7 @@ export class ChordEngine {
     }
 
     drums.forEach((placement) => {
+      this.soundingPlacement = placement;
       const variation = Math.floor(randomAt(composition.seed, Math.floor(placement.tone.hue) + 70) * 3);
       const fill = bar % 4 === 3 && beat >= 6 && this.controls.complexity > 0.45;
       const detail = placement.tone.profile?.activity;
@@ -455,12 +492,15 @@ export class ChordEngine {
       }
     });
     this.step++;
+    this.soundingPlacement = null;
     this.scheduledTime = null;
     return [...hits];
   }
 
   stop(release = 0.12) {
     this.placements = [];
+    this.timbreBindings.clear();
+    this.soundingPlacement = null;
     this.nextStepTime = null;
     this.scheduledTime = null;
     this.hitTimers.forEach(timer => window.clearTimeout(timer));

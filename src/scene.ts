@@ -24,8 +24,8 @@ export function moveCircle(placement: Placement, motion: Motion, seconds: number
   const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
   return {
     ...placement,
-    x: clamp(placement.x + wave * amplitude, bounds.x + margin, bounds.x + bounds.width - margin),
+    x: clamp(placement.x + wave * amplitude, Math.min(placement.x, bounds.x + margin), Math.max(placement.x, bounds.x + bounds.width - margin)),
     y: clamp(placement.y + (Math.cos(seconds * 0.48 + phase) - Math.cos(phase)) / 2 * amplitude,
-      bounds.y + margin, bounds.y + bounds.height - margin),
+      Math.min(placement.y, bounds.y + margin), Math.max(placement.y, bounds.y + bounds.height - margin)),
   };
 }

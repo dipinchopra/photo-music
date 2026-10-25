@@ -87,6 +87,8 @@ export default function App() {
   const [motionAmount, setMotionAmount] = useState(55);
   const motionAmountRef = useRef(0.55);
   const motionSecondsRef = useRef(0);
+  const motionStartsRef = useRef(new Map<number, number>());
+  const lastSampleRef = useRef(0);
   const recordingCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recordingStreamRef = useRef<MediaStream | null>(null);
@@ -179,7 +181,7 @@ export default function App() {
     const rect = canvas.getBoundingClientRect();
     const bounds = photoBounds(rect.width, rect.height, image.naturalWidth, image.naturalHeight);
     return placementsRef.current.map(placement => dragRef.current?.id === placement.id ? placement
-      : moveCircle(placement, motionRef.current, motionSecondsRef.current, bounds, motionAmountRef.current));
+      : moveCircle(placement, motionRef.current, motionSecondsRef.current - (motionStartsRef.current.get(placement.id) ?? 0), bounds, motionAmountRef.current));
   };
 
   const draw = () => {
@@ -237,15 +239,34 @@ export default function App() {
 
   };
 
+  const sampleScene = (detailed = true) => {
+    const moving = scenePlacements().map(placement => {
+      const tone = sampleToneAt(placement.x, placement.y, placement.radius, detailed);
+      return tone ? { ...placement, tone: { ...tone, texture: detailed ? tone.texture : placement.tone.texture } } : placement;
+    });
+    music.updatePlacements([...moving, ...livePlacementsRef.current.values()]);
+    return moving;
+  };
+
+  const changeMotion = (value: Motion, amount = motionAmountRef.current) => {
+    // Continue from the visible pose, including the current breathing radius.
+    const current = sampleScene();
+    placementsRef.current = current;
+    setPlacements(current);
+    motionSecondsRef.current = 0;
+    motionStartsRef.current.clear();
+    motionRef.current = value;
+    motionAmountRef.current = amount;
+    setMotion(value);
+    setMotionAmount(Math.round(amount * 100));
+  };
+
   const startBeat = () => {
     if (beatRef.current) return;
     beatRef.current = window.setInterval(() => {
       if (!music.needsScheduling) return;
       if (motionRef.current !== 'off' || dragRef.current) {
-        const moving = scenePlacements().map(placement => ({
-          ...placement, tone: sampleToneAt(placement.x, placement.y, placement.radius) ?? placement.tone,
-        }));
-        music.updatePlacements([...moving, ...livePlacementsRef.current.values()]);
+        sampleScene();
       }
       music.schedule();
     }, 25);
@@ -291,6 +312,10 @@ export default function App() {
       const now = performance.now();
       if (!document.hidden) motionSecondsRef.current += Math.min(0.05, (now - previousTime) / 1000);
       previousTime = now;
+      if (!document.hidden && now - lastSampleRef.current >= 40 && (motionRef.current !== 'off' || dragRef.current)) {
+        sampleScene(false);
+        lastSampleRef.current = now;
+      }
       visualHitsRef.current.forEach((strength, id) => {
         if (strength < 0.01) visualHitsRef.current.delete(id);
         else visualHitsRef.current.set(id, strength * 0.95);
@@ -323,7 +348,7 @@ export default function App() {
     };
   };
 
-  const sampleToneAt = (x: number, y: number, sampleRadius: number) => {
+  const sampleToneAt = (x: number, y: number, sampleRadius: number, detailed = true) => {
     const canvas = canvasRef.current;
     const image = imageRef.current;
     if (!canvas || !image) return null;
@@ -335,7 +360,7 @@ export default function App() {
     const scale = off.width / bounds.width;
     const sx = Math.max(0, Math.min(off.width - 1, (x - bounds.x) * scale));
     const sy = Math.max(0, Math.min(off.height - 1, (y - bounds.y) * scale));
-    const sample = sampleAverageColor(ctx, sx, sy, Math.max(2, sampleRadius * scale));
+    const sample = sampleAverageColor(ctx, sx, sy, Math.max(2, sampleRadius * scale), detailed);
     return { hue: sample.h, saturation: sample.s, brightness: sample.l, texture: sample.texture, profile: sample.profile };
   };
 
@@ -357,6 +382,7 @@ export default function App() {
   const placeAt = async (clientX: number, clientY: number) => {
     const placement = makePlacementAt(clientX, clientY, nextIdRef.current++);
     if (!placement) return;
+    motionStartsRef.current.set(placement.id, motionSecondsRef.current);
     const next = [...placementsRef.current, placement];
     placementsRef.current = next;
     setPlacements(next);
@@ -430,6 +456,8 @@ export default function App() {
 
   const updatePlacements = (next: Placement[]) => {
     placementsRef.current = next;
+    const ids = new Set(next.map(placement => placement.id));
+    motionStartsRef.current.forEach((_, id) => { if (!ids.has(id)) motionStartsRef.current.delete(id); });
     setPlacements(next);
     void music.playPlacements(next);
     if (!next.length) { stopBeat(); music.stop(); }
@@ -449,6 +477,7 @@ export default function App() {
       toneCanvas.getContext('2d', { willReadFrequently: true })?.drawImage(image, 0, 0, toneCanvas.width, toneCanvas.height);
       toneCanvasRef.current = toneCanvas;
       motionSecondsRef.current = 0;
+      motionStartsRef.current.clear();
       // Analyze a fixed-size copy, independent of display size and device pixel ratio.
       const analysis = document.createElement('canvas');
       analysis.width = 64; analysis.height = 64;
@@ -537,6 +566,7 @@ export default function App() {
             const drag = dragRef.current;
             if (drag) {
               dragRef.current = null;
+              motionStartsRef.current.set(drag.id, motionSecondsRef.current);
               if (!drag.moved) {
                 updatePlacements(placementsRef.current.filter(placement => placement.id !== drag.id));
                 return;
@@ -603,13 +633,12 @@ export default function App() {
         {(['off', 'breathe', 'sway'] as const).map(value => <button key={value} disabled={!hasImage}
           aria-pressed={motion === value} className={motion === value ? 'selected' : ''}
           onClick={() => {
-            motionRef.current = value; setMotion(value); motionSecondsRef.current = 0;
-            music.updatePlacements([...placementsRef.current, ...livePlacementsRef.current.values()]);
+            changeMotion(value);
           }}>{value === 'off' ? 'Off' : value === 'breathe' ? 'Breathe' : 'Sway'}</button>)}
       </div>
       <small>{motion === 'sway' ? 'Drift across colors · sound follows' : motion === 'breathe' ? 'Gently expand and settle' : 'Keep circles still'}</small>
       <label className="sizeControl"><span>Amount <output>{motionAmount}%</output></span>
-        <Slider value={motionAmount} onChange={value => { setMotionAmount(value); motionAmountRef.current = value / 100; }} /></label>
+        <Slider value={motionAmount} onChange={value => changeMotion(motionRef.current, value / 100)} /></label>
     </div>}
         {sheet === 'keys' && <div className="instrumentModule keysModule"><strong>🎹 Keyboard</strong>
           {([['keys', 'Volume', 'Sets the level of every keyboard circle.'], ['keysTone', 'Tone', 'Moves from soft keys to a brighter synth.'],

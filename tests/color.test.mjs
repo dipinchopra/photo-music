@@ -49,3 +49,12 @@ test('circular sampling excludes square corners and handles image edges', () => 
   assert.ok(Number.isFinite(edge.l));
   assert.equal(edge.profile.contour.length, 8);
 });
+
+
+test('fast real-time sampling reads the same colors and spatial contour as note-time analysis', () => {
+  const ctx = context((x, y) => [x * 4, y * 4, 180]);
+  const detailed = sampleAverageColor(ctx, 30, 30, 20);
+  const fast = sampleAverageColor(ctx, 30, 30, 20, false);
+  assert.equal(fast.h, detailed.h); assert.equal(fast.s, detailed.s); assert.equal(fast.l, detailed.l);
+  assert.deepEqual(fast.profile, detailed.profile);
+});
