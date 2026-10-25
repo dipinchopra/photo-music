@@ -60,6 +60,13 @@ export class ChordEngine {
   private step = 0;
   private composition: Composition = composeImage([]);
   private variation = 0.5;
+  onPlaybackState: ((running: boolean) => void) | null = null;
+
+  get running() { return this.context?.state === 'running'; }
+
+  stepDuration(tempo: number) {
+    return (30000 / tempo) * (1 + (this.step % 2 === 1 ? 1 : -1) * this.composition.swing);
+  }
   private controls: MusicControls = {
     transpose: 0, complexity: 0.5, space: 0.55,
     keys: 0.78, keysTone: 0.62, keysSustain: 0.55, keysDelay: 0.42,
@@ -87,11 +94,14 @@ export class ChordEngine {
   }
 
   async unlock() {
-    if (!this.context) {
+    if (!this.context || this.context.state === 'closed') {
+      this.activeGains = [];
+      this.activeOscillators = [];
       const AudioContextClass = window.AudioContext ||
         (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
       if (!AudioContextClass) return;
       this.context = new AudioContextClass();
+      this.context.onstatechange = () => this.onPlaybackState?.(this.running);
       this.output = this.context.createGain();
       this.delay = this.context.createDelay(1);
       this.feedback = this.context.createGain();
@@ -108,7 +118,10 @@ export class ChordEngine {
       compressor.connect(this.recorderOutput);
       this.updateSpace();
     }
-    if (this.context.state === 'suspended') await this.context.resume();
+    // Safari uses 'interrupted' after screen lock as well as 'suspended'.
+    if (this.context.state !== 'running') await this.context.resume();
+    this.onPlaybackState?.(this.running);
+    if (!this.running) return;
     const silent = this.context.createBufferSource();
     silent.buffer = this.context.createBuffer(1, 1, this.context.sampleRate);
     silent.connect(this.context.destination);
@@ -159,6 +172,29 @@ export class ChordEngine {
       this.activeOscillators = this.activeOscillators.filter((item) => item !== osc);
       this.activeGains = this.activeGains.filter((item) => item !== gain);
     };
+  }
+
+  private voice(frequency: number, volume: number, duration: number, brightness: number,
+    attack: number, send: number, guitar = false) {
+    const style = this.composition.style;
+    const tone = Math.max(0, Math.min(1, brightness));
+    if (style === 'glass') {
+      // Inharmonic partial gives a struck bell a distinct metallic attack.
+      this.tone(frequency, volume * 0.72, duration * 1.5, 'sine', 9000, 0.004, send * 0.65);
+      this.tone(frequency * 2.756, volume * 0.18, 0.22, 'sine', 9000, 0.003, send * 0.35);
+      this.tone(frequency * 4, volume * 0.1, 0.1, 'sine', 11000, 0.002, 0);
+    } else if (style === 'ambient') {
+      this.tone(frequency * 0.998, volume * 0.55, duration * 2.4, 'triangle', 500 + tone * 1000, 0.14, send);
+      this.tone(frequency * 1.002, volume * 0.45, duration * 2.1, 'sine', 1600, 0.19, send);
+    } else if (style === 'pulse') {
+      this.tone(frequency, volume * 0.75, duration * 0.45, tone > 0.6 ? 'sawtooth' : 'square',
+        450 + tone * 3200, 0.004, send * 0.3);
+      this.tone(frequency / 2, volume * 0.25, duration * 0.6, 'sine', 600, 0.006, 0);
+    } else {
+      this.tone(frequency, volume * 0.8, duration * 0.65, guitar ? 'sawtooth' : 'triangle',
+        950 + tone * 3800, Math.min(attack, 0.008), send * 0.6);
+      this.tone(frequency * 2, volume * 0.2, 0.08, 'sine', 7000, 0.002, 0);
+    }
   }
 
   private kick(volume: number, send = 0) {
@@ -216,7 +252,7 @@ export class ChordEngine {
   }
 
   pulse(): Instrument[] {
-    if (!this.placements.length) return [];
+    if (!this.placements.length || !this.running) return [];
     const hits = new Set<Instrument>();
     const composition = this.composition;
     const bar = Math.floor(this.step / 8);
@@ -228,11 +264,11 @@ export class ChordEngine {
     const keys = groups('keys'), guitars = groups('guitar'), bass = groups('bass'), drums = groups('drums');
 
     // Diatonic chords follow the image's mode; inversions keep the pad compact.
-    if (keys.length && beat === 0 && this.controls.keys > 0) {
+    if (keys.length && beat === 0 && this.controls.keys > 0 && (composition.style === 'ambient' || bar % 2 === 0)) {
       hits.add('keys');
       [root, root + 2, root + 4].forEach((degree, index) => {
         this.tone(noteAt(degree >= 7 ? degree - 7 : degree, 24),
-          (0.022 - index * 0.003) * this.controls.keys,
+          (composition.style === 'ambient' ? 0.025 : 0.008) * this.controls.keys / (1 + index * 0.2),
           1.4 + this.controls.keysSustain * 1.6,
           'sine', 650 + this.controls.keysTone * 900, 0.12, this.controls.keysDelay);
       });
@@ -246,10 +282,9 @@ export class ChordEngine {
       const degree = beat % 4 === 0 ? root + [0, 2, 4][Math.abs(phrase.degree) % 3] : phrase.degree;
       const register = placement.tone.brightness > 0.68 ? 36 : 24;
       const volume = 0.085 * placement.level * this.controls.keys * phrase.accent / Math.sqrt(keys.length);
-      this.tone(noteAt(degree, register), volume,
+      this.voice(noteAt(degree, register), volume,
         0.16 + this.controls.keysSustain * 0.6 + (beat % 4 === 0 ? 0.24 : 0),
-        this.controls.keysTone > 0.72 ? 'sawtooth' : 'triangle',
-        600 + this.controls.keysTone * 2400 + placement.tone.saturation * 1300,
+        this.controls.keysTone * 0.55 + placement.tone.saturation * 0.45,
         0.012 + (1 - this.controls.keysTone) * 0.035, this.controls.keysDelay);
     });
 
@@ -261,10 +296,9 @@ export class ChordEngine {
       const degrees = this.controls.guitarStrum > 0.58 ? [root, root + 2, root + 4] : [root + (Math.abs(phrase.degree) % 3) * 2];
       degrees.forEach((degree, index) => {
         const volume = 0.065 * placement.level * this.controls.guitar * phrase.accent / Math.sqrt(guitars.length * degrees.length);
-        this.tone(noteAt(degree, 24), volume, 0.18 + this.controls.guitarStrum * 0.4,
-          this.controls.guitarTone > 0.66 ? 'sawtooth' : 'triangle',
-          800 + this.controls.guitarTone * 2300 + placement.tone.saturation * 1200,
-          0.006 + index * 0.014, this.controls.guitarDelay);
+        this.voice(noteAt(degree, 24), volume, 0.18 + this.controls.guitarStrum * 0.4,
+          this.controls.guitarTone * 0.55 + placement.tone.saturation * 0.45,
+          0.006 + index * 0.014, this.controls.guitarDelay, true);
       });
     });
 
@@ -277,7 +311,8 @@ export class ChordEngine {
         : root + (beat === 4 && this.controls.bassMovement > 0.32 ? 4 : 0);
       const register = this.controls.bassDepth > 0.66 ? 0 : 12;
       this.tone(noteAt(degree, register), 0.12 * placement.level * this.controls.bass * phrase.accent / Math.sqrt(bass.length),
-        beat % 4 === 0 ? 0.62 : 0.3, 'sine', 500 + placement.tone.texture * 550, 0.012, this.controls.bassDelay);
+        composition.style === 'pulse' ? 0.18 : beat % 4 === 0 ? 0.62 : 0.3,
+        composition.style === 'pulse' ? 'triangle' : 'sine', 350 + composition.energy * 1000, 0.012, this.controls.bassDelay);
     });
 
     drums.forEach((placement) => {
@@ -287,7 +322,9 @@ export class ChordEngine {
       const brightness = placement.tone.brightness;
 
       if (brightness < 0.34) {
-        const kickPatterns = [[0, 4], [0, 3, 4, 6], [0, 4, 7]];
+        const kickPatterns = composition.style === 'ambient' ? [[0], [0, 6], [0, 4]]
+          : composition.style === 'pulse' ? [[0, 2, 4, 6], [0, 2, 3, 4, 6], [0, 2, 4, 7]]
+          : [[0, 4], [0, 3, 4, 6], [0, 4, 7]];
         const pattern = this.controls.fourOnFloor
           ? [0, 2, 4, 6]
           : this.controls.complexity < 0.35 ? [0, 4] : kickPatterns[variation];

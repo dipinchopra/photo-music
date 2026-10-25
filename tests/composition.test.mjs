@@ -42,3 +42,16 @@ test('notes stay in the selected mode across negative degrees and octaves', () =
     }
   }
 });
+
+test('contrasting photo features select four audible palettes and different tempos', () => {
+  const photos = [
+    tone(210, 0.15, 0.05, 0.1),
+    tone(45, 0.85, 0.1, 0.3),
+    tone(30, 0.5, 0.25, 0.45),
+    tone(5, 0.5, 0.9, 0.95),
+  ].map(cell => composeImage(Array(16).fill(cell)));
+  assert.deepEqual(photos.map(p => p.style), ['ambient', 'glass', 'plucked', 'pulse']);
+  assert.equal(new Set(photos.map(p => p.tempo)).size, 4);
+  assert.ok(photos[3].tempo - photos[0].tempo > 50);
+  assert.ok(photos[2].swing > photos[0].swing);
+});

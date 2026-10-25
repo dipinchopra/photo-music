@@ -1,6 +1,7 @@
 import type { ImageTone } from './music';
 
 export type Composition = {
+  style: 'ambient' | 'glass' | 'plucked' | 'pulse'; tempo: number; swing: number;
   seed: number; tonic: number; scale: readonly number[];
   progression: readonly number[]; energy: number; warmth: number;
 };
@@ -35,10 +36,17 @@ export function composeImage(cells: ImageTone[]): Composition {
   const count = Math.max(1, cells.length);
   brightness /= count; saturation /= count; texture /= count; contrast /= count;
   const mode = brightness < 0.35 ? 0 : saturation < 0.28 ? 1 : brightness > 0.68 ? 3 : 2;
+  const energy = Math.min(1, texture * 0.45 + contrast * 0.8 + saturation * 0.35);
+  const style = saturation > 0.58 && energy > 0.42 ? 'pulse'
+    : brightness < 0.34 || (saturation < 0.22 && energy < 0.3) ? 'ambient'
+    : brightness > 0.64 ? 'glass' : 'plucked';
+  const tempos = { ambient: 64, glass: 90, plucked: 106, pulse: 128 };
   return {
+    style, tempo: tempos[style] + Math.round(energy * 16),
+    swing: style === 'plucked' ? 0.2 : style === 'glass' ? 0.09 : 0,
     seed, tonic: Math.floor(randomAt(seed, 0) * 12), scale: MODES[mode],
     progression: PROGRESSIONS[Math.floor(randomAt(seed, 1) * PROGRESSIONS.length)],
-    energy: Math.min(1, texture * 0.45 + contrast * 0.8 + saturation * 0.35),
+    energy,
     warmth: brightness,
   };
 }
@@ -54,8 +62,8 @@ export function phraseStep(composition: Composition, tone: ImageTone, step: numb
   const bar = Math.floor(step / 8);
   const beat = step % 8;
   const slot = step % 16;
-  const density = 0.24 + complexity * 0.3 + tone.texture * 0.25 + composition.energy * 0.12;
-  const active = beat === 0 || randomAt(seed, slot) < density;
+  const density = (composition.style === 'ambient' ? 0.07 : composition.style === 'pulse' ? 0.4 : 0.2) + complexity * 0.24 + tone.texture * 0.18 + composition.energy * 0.12;
+  const active = beat === 0 || (composition.style === 'ambient' && beat % 2 === 1 ? false : randomAt(seed, slot) < density);
   const contour = [0, 1, 2, 1, -1, 0, 2, -1];
   const start = Math.floor(tone.hue / 360 * 7);
   const motion = contour[(slot + Math.floor(randomAt(seed, 20) * 8)) % 8];

@@ -54,6 +54,8 @@ export default function App() {
   }, [sheet]);
 
   const [hasImage, setHasImage] = useState(false);
+  const [audioPaused, setAudioPaused] = useState(false);
+  const [imageStyle, setImageStyle] = useState('');
   const [placements, setPlacements] = useState<Placement[]>([]);
   const [selected, setSelected] = useState<Instrument>('keys');
   const [mode, setMode] = useState<'place' | 'live'>('place');
@@ -235,7 +237,8 @@ export default function App() {
     beatTimeRef.current = performance.now();
     beatRef.current = window.setInterval(() => {
       const now = performance.now();
-      beatProgressRef.current += (now - beatTimeRef.current) / (30000 / tempoRef.current);
+      if (!music.running) { beatTimeRef.current = now; return; }
+      beatProgressRef.current += (now - beatTimeRef.current) / music.stepDuration(tempoRef.current);
       beatTimeRef.current = now;
       if (beatProgressRef.current < 1) return;
       // Keep phase between ticks without bursting missed notes after backgrounding.
@@ -379,14 +382,49 @@ export default function App() {
     else { stopBeat(); music.stop(); }
   };
 
+  const resumePlayback = async () => {
+    if (document.hidden || !placementsRef.current.length) return;
+    setAudioPaused(!music.running);
+    try {
+      await music.playPlacements(placementsRef.current);
+      if (document.hidden) return;
+      if (music.running) {
+        beatTimeRef.current = performance.now();
+        startBeat();
+      }
+      setAudioPaused(!music.running);
+    } catch { setAudioPaused(true); }
+  };
+
   useEffect(() => {
-    const release = () => stopLive();
-    const hide = () => { if (document.hidden) release(); };
-    window.addEventListener('blur', release);
-    document.addEventListener('visibilitychange', hide);
+    music.onPlaybackState = running => {
+      setAudioPaused(!running && placementsRef.current.length > 0 && !document.hidden);
+    };
+    const pause = () => {
+      livePlacementsRef.current.clear();
+      stopBeat();
+      music.stop();
+    };
+    const show = () => {
+      if (document.hidden) pause();
+      else void resumePlayback();
+    };
+    const focus = () => { if (!document.hidden) void resumePlayback(); };
+    const gesture = () => { if (!music.running) void resumePlayback(); };
+    window.addEventListener('blur', pause);
+    window.addEventListener('focus', focus);
+    window.addEventListener('pageshow', focus);
+    document.addEventListener('visibilitychange', show);
+    document.addEventListener('pointerdown', gesture, true);
+    document.addEventListener('keydown', gesture, true);
     return () => {
-      window.removeEventListener('blur', release);
-      document.removeEventListener('visibilitychange', hide);
+      music.onPlaybackState = null;
+      window.removeEventListener('blur', pause);
+      window.removeEventListener('focus', focus);
+      window.removeEventListener('pageshow', focus);
+      document.removeEventListener('visibilitychange', show);
+      document.removeEventListener('pointerdown', gesture, true);
+      document.removeEventListener('keydown', gesture, true);
     };
   }, []);
 
@@ -414,7 +452,12 @@ export default function App() {
           const cell = sampleAverageColor(context, x, y, 8);
           cells.push({ hue: cell.h, saturation: cell.s, brightness: cell.l, texture: cell.texture });
         }
-        music.setComposition(composeImage(cells));
+        const composition = composeImage(cells);
+        music.setComposition(composition);
+        setImageStyle({ ambient: 'Soft atmosphere', glass: 'Glass bells', plucked: 'Plucked groove', pulse: 'Synth pulse' }[composition.style]);
+        tempoRef.current = composition.tempo;
+        beatProgressRef.current = 0;
+        setControls(current => ({ ...current, tempo: composition.tempo }));
       }
       stopLive();
       updatePlacements([]);
@@ -434,6 +477,8 @@ export default function App() {
       </label>
       </div>
     </header>
+    {audioPaused && <div className="recordMessage" role="status"><span>Audio paused</span><button onClick={() => void resumePlayback()}>Resume sound ▶</button></div>}
+    {hasImage && <div className="recordMessage"><span>{imageStyle}</span><span>{controls.tempo} BPM</span></div>}
     {recordError && <div className="recordMessage" role="alert">{recordError}</div>}
     {recordingUrl && <div className="recordMessage"><a href={recordingUrl} download={`image-music.${recordingType.includes('mp4') ? 'mp4' : 'webm'}`}>↓ Save recording</a><button onClick={() => { URL.revokeObjectURL(recordingUrl); setRecordingUrl(null); }}>Dismiss</button></div>}
 
