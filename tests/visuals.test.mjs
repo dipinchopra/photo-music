@@ -3,11 +3,11 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 const source = stripTypeScriptTypes(readFileSync(new URL('../src/visuals.ts', import.meta.url), 'utf8'));
-const { VISUAL_MODES, visualOutline, hitVisual, findEditablePlacement, findDraggablePlacement, drawVisual, drawPlacementMarker } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+const { VISUAL_MODES, visualOutline, hitVisual, findEditablePlacement, findDraggablePlacement, drawVisual, drawPlacementMarker, showsPlacementMarker } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 const placement = { id: 1, x: 200, y: 200, radius: 50, instrument: 'keys' };
 
-test('all four treatments have valid hit targets; Keys shares the living circle outline', () => {
-  assert.equal(VISUAL_MODES.length, 4);
+test('all six treatments have valid hit targets; Keys shares the living circle outline', () => {
+  assert.equal(VISUAL_MODES.length, 6);
   const outlines = new Set();
   for (const mode of VISUAL_MODES) {
     const points = visualOutline(placement, mode.id);
@@ -17,7 +17,7 @@ test('all four treatments have valid hit targets; Keys shares the living circle 
     assert.equal(hitVisual(placement, mode.id, 900, 900), false);
 
   }
-  assert.equal(outlines.size, 3);
+  assert.equal(outlines.size, 4);
   for (const point of visualOutline(placement, 'shapes')) {
     assert.ok(Math.abs(Math.hypot(point.x - placement.x, point.y - placement.y) - placement.radius) < 1e-9);
   }
@@ -96,5 +96,43 @@ test('dragging targets any topmost instrument without switching the selected ins
     assert.equal(findDraggablePlacement([piano, drums], id, 900, 900), undefined);
     assert.equal(findEditablePlacement([piano, drums], 'keys', id, 200, 200), undefined,
       'a cross-instrument tap still adds instead of deleting the drag target');
+  }
+});
+
+
+test('only Living Photo includes plus markers, on the shared screen and export renderer', () => {
+  for (const { id } of VISUAL_MODES) assert.equal(showsPlacementMarker(id), id === 'living');
+});
+
+function tileSnapshot(mode, tone, hit = 0, x = 200, y = 150) {
+  const calls = [];
+  const ctx = new Proxy({}, {
+    get: (_, key) => (...args) => calls.push([key, ...args]),
+    set: (_, key, value) => { calls.push(['set', key, value]); return true; },
+  });
+  drawVisual(ctx, { width: 1200, height: 900 }, { x: 0, y: 0, width: 400, height: 300 },
+    { ...placement, x, y, tone }, mode, 0, hit, '#8be9fd');
+  return calls;
+}
+const tileTone = { hue: 25, saturation: 0.6, brightness: 0.4, texture: 0.5,
+  profile: { contour: [0.2, 0.7, 0.3, 0.9], activity: [0.5] } };
+
+test('collage and quilt remain stable between notes, respond to hits, and derive style from the photo', () => {
+  for (const mode of ['collage', 'quilt']) {
+    const resting = tileSnapshot(mode, tileTone);
+    assert.deepEqual(tileSnapshot(mode, tileTone), resting);
+    assert.notDeepEqual(tileSnapshot(mode, tileTone, 1), resting, `${mode} responds to actual note hits`);
+    assert.notDeepEqual(tileSnapshot(mode, { ...tileTone, hue: 190 }), resting, `${mode} uses photo color`);
+  }
+});
+
+test('photo tile source crops remain valid at photo edges for display and export caches', () => {
+  for (const mode of ['collage', 'quilt']) for (const [x, y] of [[0, 0], [400, 300], [200, 150]]) {
+    const crops = tileSnapshot(mode, tileTone, 1, x, y).filter(call => call[0] === 'drawImage');
+    assert.equal(crops.length, mode === 'collage' ? 12 : 25);
+    for (const [, , sx, sy, sw, sh] of crops) {
+      assert.ok(sx >= 0 && sy >= 0 && sw > 0 && sh > 0);
+      assert.ok(sx + sw <= 1200 + 1e-9 && sy + sh <= 900 + 1e-9);
+    }
   }
 });

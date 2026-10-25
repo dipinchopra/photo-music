@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { sampleAverageColor } from './color';
 import { composeImage, type ArpMode } from './composition';
 import { photoBounds, recordingSize, moveCircle, type Motion } from './scene';
-import { drawVisual, drawPlacementMarker, findDraggablePlacement, VISUAL_MODES, type VisualMode } from './visuals';
+import { drawVisual, drawPlacementMarker, showsPlacementMarker, findDraggablePlacement, VISUAL_MODES, type VisualMode } from './visuals';
 import { EditHistory } from './history';
 import { PlaybackRecovery } from './playback';
 import { ChordEngine, type Instrument, type Placement } from './music';
@@ -14,6 +14,23 @@ const INSTRUMENTS: Array<{ id: Instrument; label: string; color: string }> = [
   { id: 'bass', label: '🎸 Bass', color: '#bd93f9' },
   { id: 'drums', label: '🥁 Percussion', color: '#ffb86c' },
 ];
+
+function VisualPreview({ mode, image, tone }: { mode: VisualMode; image: HTMLImageElement | null; tone?: Placement['tone'] }) {
+  const ref = useRef<HTMLCanvasElement | null>(null);
+  useEffect(() => {
+    const ctx = ref.current?.getContext('2d');
+    if (!ctx) return;
+    ctx.clearRect(0, 0, 320, 176);
+    if (!image) return;
+    const bounds = photoBounds(320, 176, image.naturalWidth, image.naturalHeight);
+    ctx.drawImage(image, bounds.x, bounds.y, bounds.width, bounds.height);
+    const placement: Placement = { id: 1, x: 160, y: 88, radius: Math.min(64, bounds.width * 0.4),
+      instrument: 'keys', level: 1, tone: tone ?? { hue: 35, saturation: 0.5, brightness: 0.5, texture: 0.5 } };
+    drawVisual(ctx, image, bounds, placement, mode, 0, 0, '#8be9fd');
+    if (showsPlacementMarker(mode)) drawPlacementMarker(ctx, bounds, placement, '#8be9fd');
+  }, [mode, image, tone]);
+  return <canvas ref={ref} width={320} height={176} className="visualPreview" aria-hidden="true" />;
+}
 
 function Slider({ min = 0, max = 100, value, onChange }: {
   min?: number; max?: number; value: number; onChange: (value: number) => void;
@@ -237,7 +254,7 @@ export default function App() {
       drawVisual(target, photo, { x: dx / dpr, y: dy / dpr, width: dw / dpr, height: dh / dpr },
         placement, visualModeRef.current, visualTime, visualHitsRef.current.get(placement.id) ?? 0, color, scale);
       });
-      if (visualModeRef.current === 'living') drawnPlacements.forEach(placement => drawPlacementMarker(target,
+      if (showsPlacementMarker(visualModeRef.current)) drawnPlacements.forEach(placement => drawPlacementMarker(target,
         { x: dx / dpr, y: dy / dpr, width: dw / dpr, height: dh / dpr }, placement,
         INSTRUMENTS.find(item => item.id === placement.instrument)!.color, scale));
     };
@@ -707,11 +724,14 @@ export default function App() {
           onPointerCancel={() => { sheetDragStart.current = null; }}><span /></button>
         <header className="sheetHeader"><div><h2 id="sheetTitle">{sheet === 'mix' ? 'The mix' : sheet === 'motion' ? 'Motion' : sheet === 'visuals' ? 'Visuals' : INSTRUMENTS.find(i => i.id === sheet)?.label}</h2></div><button onClick={() => setSheet(null)} aria-label="Close controls">✕</button></header>
         {sheet === 'visuals' && <div className="visualChoices">
+          <div className="visualModeList" role="group" aria-label="Visual styles · scroll for more">
           {VISUAL_MODES.map(visual => <button key={visual.id} aria-pressed={visualMode === visual.id}
             className={visualMode === visual.id ? 'selected' : ''} onClick={() => { visualModeRef.current = visual.id; setVisualMode(visual.id); }}>
+            <VisualPreview mode={visual.id} image={imageRef.current} tone={placements[0]?.tone} />
             <strong>{visual.label}</strong><small>{visual.description}</small>
           </button>)}
-          <small>Switch styles on the same performance. Sound, sampling and motion stay unchanged.</small>
+          </div>
+          <small>Swipe for more styles. Tap to try on your photo. Every style is included in recordings.</small>
         </div>}
         {sheet === 'motion' && <div className="motionControls">
       <div className="modePicker">

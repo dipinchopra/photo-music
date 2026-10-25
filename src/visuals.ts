@@ -1,18 +1,25 @@
 import type { Placement } from './music';
 import type { Bounds } from './scene';
 
-export type VisualMode = 'living' | 'fragments' | 'ribbons' | 'shapes';
+export type VisualMode = 'living' | 'fragments' | 'ribbons' | 'shapes' | 'collage' | 'quilt';
 export const VISUAL_MODES: { id: VisualMode; label: string; description: string }[] = [
   { id: 'living', label: 'Living photo', description: 'Soft refraction with + markers, including in recordings.' },
   { id: 'fragments', label: 'Floating fragments', description: 'Organic pieces of the photo lift and drift together.' },
   { id: 'ribbons', label: 'Photo ribbons', description: 'Strips of the image bend into flowing, layered ribbons.' },
   { id: 'shapes', label: 'Instrument shapes', description: 'Colored borders. Keys: circles. Guitar: leaves. Bass: squares. Drums: diamonds.' },
+  { id: 'collage', label: 'Shuffle collage', description: 'Rearranged pieces of your photo. Notes slide and stretch the crops inside each tile.' },
+  { id: 'quilt', label: 'Color quilt', description: 'Place patches of color and photo tiles. Notes open little windows back into your image.' },
 ];
 export type Point = { x: number; y: number };
+export const showsPlacementMarker = (mode: VisualMode) => mode === 'living';
 
 /** This same outline drives drawing, hit testing, and rim removal. */
 export function visualOutline(placement: Placement, mode: VisualMode, time = 0): Point[] {
   const { x, y, radius: r, id } = placement;
+  if (mode === 'collage' || mode === 'quilt') {
+    return [{ x: x - r, y: y - r }, { x: x + r, y: y - r },
+      { x: x + r, y: y + r }, { x: x - r, y: y + r }];
+  }
   if (mode === 'ribbons') {
     const edge = (u: number, sign: number) => ({ x: x + (u * 2 - 1) * r * 1.45,
       y: y + Math.sin(u * Math.PI * 1.8 + id * 0.7 + time * 0.25) * r * 0.3
@@ -89,13 +96,71 @@ function drawPhoto(ctx: CanvasRenderingContext2D, image: CanvasImageSource, boun
   ctx.restore();
 }
 
+/** Bounded source crops work identically for original photos and export caches. */
+function photoTile(ctx: CanvasRenderingContext2D, image: CanvasImageSource, bounds: Bounds,
+  dx: number, dy: number, width: number, height: number, cx: number, cy: number, zoom = 1) {
+  const source = image as { naturalWidth?: number; naturalHeight?: number; width?: number; height?: number };
+  const iw = source.naturalWidth || source.width || bounds.width;
+  const ih = source.naturalHeight || source.height || bounds.height;
+  const sw = Math.min(iw, width / bounds.width * iw / zoom);
+  const sh = Math.min(ih, height / bounds.height * ih / zoom);
+  const sx = Math.max(0, Math.min(iw - sw, (cx - bounds.x) / bounds.width * iw - sw / 2));
+  const sy = Math.max(0, Math.min(ih - sh, (cy - bounds.y) / bounds.height * ih - sh / 2));
+  ctx.drawImage(image, sx, sy, sw, sh, dx, dy, width, height);
+}
+
+function drawTiles(ctx: CanvasRenderingContext2D, image: CanvasImageSource, bounds: Bounds,
+  placement: Placement, mode: 'collage' | 'quilt', hit: number) {
+  const { x, y, radius: r, id, instrument, tone } = placement;
+  const cols = mode === 'collage' ? 4 : 5, rows = mode === 'collage' ? 3 : 5;
+  const tw = r * 2 / cols, th = r * 2 / rows;
+  const hue = tone?.hue ?? 35;
+  const palette = ['#131319', '#f2ead4', `hsl(${(hue + 345) % 360} 78% 45%)`,
+    `hsl(${(hue + 10) % 360} 87% 53%)`, `hsl(${(hue + 30) % 360} 80% 57%)`,
+    `hsl(${(hue + 200) % 360} 55% 52%)`, `hsl(${(hue + 235) % 360} 26% 72%)`];
+  const lane = ['keys', 'guitar', 'bass', 'drums'].indexOf(instrument);
+  for (let row = 0; row < rows; row++) for (let col = 0; col < cols; col++) {
+    const index = row * cols + col;
+    const contour = tone?.profile?.contour[index % (tone.profile.contour.length || 1)] ?? 0.5;
+    // Keep the layout stable while sway resamples the photo. Color and crop
+    // can evolve smoothly without shuffling the whole patch on every sample.
+    const seed = (id * 17 + index * 13) >>> 0;
+    const dx = x - r + col * tw, dy = y - r + row * th;
+    // Only a few cells respond to each note; no synchronized whole-patch flash.
+    const energy = (row + col + lane) % 3 === 0 ? hit : hit * 0.12;
+    ctx.save(); ctx.beginPath();
+    if (mode === 'collage') {
+      ctx.roundRect(dx + 0.4, dy + 0.4, tw - 0.8, th - 0.8, Math.min(5, tw * 0.1)); ctx.clip();
+      const shiftX = instrument === 'keys' ? energy * tw * 0.3 : 0;
+      const shiftY = instrument === 'guitar' ? energy * th * 0.3 : 0;
+      const sourceCol = (col + (seed % 3)) % cols;
+      const sourceRow = (row + (seed % 2)) % rows;
+      photoTile(ctx, image, bounds, dx, dy, tw, th,
+        x - r + (sourceCol + 0.5) * tw + shiftX + Math.sin(hue * Math.PI / 180) * tw * 0.12 + (contour - 0.5) * tw * 0.15,
+        y - r + (sourceRow + 0.5) * th + shiftY,
+        1 + (instrument === 'bass' ? energy * 0.22 : energy * 0.08));
+      ctx.strokeStyle = 'rgba(255,255,255,.22)'; ctx.lineWidth = 0.8; ctx.stroke();
+    } else {
+      photoTile(ctx, image, bounds, dx, dy, tw + 0.2, th + 0.2, dx + tw / 2, dy + th / 2);
+      if (seed % 7 !== 0) {
+        const inset = energy * Math.min(tw, th) * (instrument === 'drums' ? 0.19 : 0.12);
+        ctx.fillStyle = palette[seed % palette.length];
+        ctx.fillRect(dx + inset, dy + inset, tw - inset * 2 + 0.2, th - inset * 2 + 0.2);
+      }
+    }
+    ctx.restore();
+  }
+}
+
 export function drawVisual(ctx: CanvasRenderingContext2D, image: CanvasImageSource, bounds: Bounds,
   placement: Placement, mode: VisualMode, time: number, hit: number, color: string, dpr = 1) {
   ctx.save();
   ctx.scale(dpr, dpr);
   ctx.beginPath(); ctx.rect(bounds.x, bounds.y, bounds.width, bounds.height); ctx.clip();
   const { x, y, radius: r, id } = placement;
-  if (mode === 'living') {
+  if (mode === 'collage' || mode === 'quilt') {
+    drawTiles(ctx, image, bounds, placement, mode, hit);
+  } else if (mode === 'living') {
     // Feathered concentric bands make a continuous, frameless distortion field.
     for (let band = 0; band < 18; band++) {
       const edge = 1 - band / 18;
