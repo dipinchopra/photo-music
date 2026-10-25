@@ -140,11 +140,15 @@ export class ChordEngine {
 
   async playPlacements(placements: Placement[]) {
     const wasEmpty = this.placements.length === 0;
+    this.updatePlacements(placements);
+    await this.unlock();
+    if (wasEmpty && this.placements.length) this.pulse();
+  }
+
+  updatePlacements(placements: Placement[]) {
     this.placements = placements;
     const ids = new Set(placements.map(placement => placement.id));
     this.keyHistory.forEach((_, id) => { if (!ids.has(id)) this.keyHistory.delete(id); });
-    await this.unlock();
-    if (wasEmpty && this.placements.length) this.pulse();
   }
 
   private tone(frequency: number, volume: number, duration: number, type: OscillatorType,

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { sampleAverageColor } from './color';
 import { composeImage } from './composition';
+import { photoBounds, recordingSize, moveCircle, type Motion } from './scene';
 import { refractPhoto, drawGlassRim } from './glass';
 import { ChordEngine, type Instrument, type Placement } from './music';
 
@@ -24,6 +25,7 @@ function Slider({ min = 0, max = 100, value, onChange }: {
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
+  const toneCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const placementsRef = useRef<Placement[]>([]);
   const livePlacementsRef = useRef(new Map<number, Placement>());
   const beatRef = useRef<number | null>(null);
@@ -67,6 +69,10 @@ export default function App() {
     drums: 60, drumPunch: 70, drumDensity: 50, drumDelay: 8,
   });
 
+  const [motion, setMotion] = useState<Motion>('off');
+  const motionRef = useRef<Motion>('off');
+  const motionSecondsRef = useRef(0);
+  const recordingCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recordingStreamRef = useRef<MediaStream | null>(null);
   const recordingUrlRef = useRef<string | null>(null);
@@ -89,7 +95,13 @@ export default function App() {
     }
     try {
       const audio = await music.recordingStream();
-      const stream = canvas.captureStream(30);
+      const image = imageRef.current!;
+      const cropped = document.createElement('canvas');
+      const size = recordingSize(image.naturalWidth, image.naturalHeight);
+      cropped.width = size.width; cropped.height = size.height;
+      recordingCanvasRef.current = cropped;
+      draw();
+      const stream = cropped.captureStream(30);
       // Clone audio so stopping a recording never stops the engine’s audio track.
       audio.getAudioTracks().forEach(track => stream.addTrack(track.clone()));
       recordingStreamRef.current = stream;
@@ -101,6 +113,7 @@ export default function App() {
       recorder.onstop = () => {
         stream.getTracks().forEach(track => track.stop());
         recordingStreamRef.current = null;
+        recordingCanvasRef.current = null;
         recorderRef.current = null;
         setRecording(false);
         if (!chunks.length) return;
@@ -117,6 +130,7 @@ export default function App() {
     } catch {
       recordingStreamRef.current?.getTracks().forEach(track => track.stop());
       recordingStreamRef.current = null;
+      recordingCanvasRef.current = null;
       setRecordError('Could not start recording in this browser. Try your phone’s screen recorder.');
     }
   };
@@ -143,6 +157,16 @@ export default function App() {
     };
   }, []);
 
+  const scenePlacements = () => {
+    const canvas = canvasRef.current;
+    const image = imageRef.current;
+    if (!canvas || !image) return placementsRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const bounds = photoBounds(rect.width, rect.height, image.naturalWidth, image.naturalHeight);
+    return placementsRef.current.map(placement => dragRef.current?.id === placement.id ? placement
+      : moveCircle(placement, motionRef.current, motionSecondsRef.current, bounds));
+  };
+
   const draw = () => {
     const canvas = canvasRef.current;
     const image = imageRef.current;
@@ -158,14 +182,10 @@ export default function App() {
       canvas.height = height;
     }
     ctx.clearRect(0, 0, width, height);
-    const imgRatio = image.naturalWidth / image.naturalHeight;
-    const canvasRatio = width / height;
-    let dw = width, dh = height, dx = 0, dy = 0;
-    if (imgRatio > canvasRatio) { dh = width / imgRatio; dy = (height - dh) / 2; }
-    else { dw = height * imgRatio; dx = (width - dw) / 2; }
+    const { x: dx, y: dy, width: dw, height: dh } = photoBounds(width, height, image.naturalWidth, image.naturalHeight);
     ctx.drawImage(image, dx, dy, dw, dh);
 
-    const drawnPlacements = [...placementsRef.current, ...livePlacementsRef.current.values()];
+    const drawnPlacements = [...scenePlacements(), ...livePlacementsRef.current.values()];
 
     drawnPlacements.forEach(placement => {
       refractPhoto(ctx, image, { x: dx, y: dy, width: dw, height: dh },
@@ -193,6 +213,12 @@ export default function App() {
       drawGlassRim(ctx, x, y, r, config.color, dpr,
         visualHitsRef.current.get(placement.id) ?? 0);
     });
+    const cropped = recordingCanvasRef.current;
+    const recordingContext = cropped?.getContext('2d');
+    if (cropped && recordingContext) {
+      // Copy only the photo rectangle, including all rendered lenses and glints.
+      recordingContext.drawImage(canvas, dx, dy, dw, dh, 0, 0, cropped.width, cropped.height);
+    }
   };
 
   const startBeat = () => {
@@ -206,6 +232,12 @@ export default function App() {
       if (beatProgressRef.current < 1) return;
       // Keep phase between ticks without bursting missed notes after backgrounding.
       beatProgressRef.current %= 1;
+      if (motionRef.current !== 'off') {
+        const moving = scenePlacements().map(placement => ({
+          ...placement, tone: sampleToneAt(placement.x, placement.y, placement.radius) ?? placement.tone,
+        }));
+        music.updatePlacements([...moving, ...livePlacementsRef.current.values()]);
+      }
       music.pulse();
     }, 16);
   };
@@ -245,7 +277,11 @@ export default function App() {
 
   useEffect(() => {
     let frame = 0;
+    let previousTime = performance.now();
     const animate = () => {
+      const now = performance.now();
+      if (!document.hidden) motionSecondsRef.current += Math.min(0.05, (now - previousTime) / 1000);
+      previousTime = now;
       visualHitsRef.current.forEach((strength, id) => {
         if (strength < 0.01) visualHitsRef.current.delete(id);
         else visualHitsRef.current.set(id, strength * 0.95);
@@ -280,19 +316,14 @@ export default function App() {
     const image = imageRef.current;
     if (!canvas || !image) return null;
     const rect = canvas.getBoundingClientRect();
-    const off = document.createElement('canvas');
-    off.width = canvas.width;
-    off.height = canvas.height;
-    const ctx = off.getContext('2d', { willReadFrequently: true });
-    if (!ctx) return null;
-    const imgRatio = image.naturalWidth / image.naturalHeight;
-    const canvasRatio = off.width / off.height;
-    let dw = off.width, dh = off.height, dx = 0, dy = 0;
-    if (imgRatio > canvasRatio) { dh = off.width / imgRatio; dy = (off.height - dh) / 2; }
-    else { dw = off.height * imgRatio; dx = (off.width - dw) / 2; }
-    ctx.drawImage(image, dx, dy, dw, dh);
-    const dpr = off.width / rect.width;
-    const sample = sampleAverageColor(ctx, x * dpr, y * dpr, Math.max(12, sampleRadius * 0.35) * dpr);
+    const off = toneCanvasRef.current;
+    const ctx = off?.getContext('2d', { willReadFrequently: true });
+    if (!off || !ctx) return null;
+    const bounds = photoBounds(rect.width, rect.height, image.naturalWidth, image.naturalHeight);
+    const scale = off.width / bounds.width;
+    const sx = Math.max(0, Math.min(off.width - 1, (x - bounds.x) * scale));
+    const sy = Math.max(0, Math.min(off.height - 1, (y - bounds.y) * scale));
+    const sample = sampleAverageColor(ctx, sx, sy, Math.max(2, sampleRadius * 0.35 * scale));
     return { hue: sample.h, saturation: sample.s, brightness: sample.l, texture: sample.texture };
   };
 
@@ -398,7 +429,15 @@ export default function App() {
     const url = URL.createObjectURL(file);
     const image = new Image();
     image.onload = () => {
+      stopRecording();
       imageRef.current = image;
+      const toneCanvas = document.createElement('canvas');
+      const toneScale = Math.min(1, 512 / Math.max(image.naturalWidth, image.naturalHeight));
+      toneCanvas.width = Math.max(1, Math.round(image.naturalWidth * toneScale));
+      toneCanvas.height = Math.max(1, Math.round(image.naturalHeight * toneScale));
+      toneCanvas.getContext('2d', { willReadFrequently: true })?.drawImage(image, 0, 0, toneCanvas.width, toneCanvas.height);
+      toneCanvasRef.current = toneCanvas;
+      motionSecondsRef.current = 0;
       // Analyze a fixed-size copy, independent of display size and device pixel ratio.
       const analysis = document.createElement('canvas');
       analysis.width = 64; analysis.height = 64;
@@ -457,9 +496,10 @@ export default function App() {
               return;
             }
             const point = canvasPoint(e.clientX, e.clientY);
-            const hit = [...placementsRef.current].reverse().find((placement) =>
+            const hit = [...scenePlacements()].reverse().find((placement) =>
               Math.hypot(point.x - placement.x, point.y - placement.y) <= placement.radius);
             if (hit) {
+              placementsRef.current = placementsRef.current.map(placement => placement.id === hit.id ? hit : placement);
               e.currentTarget.setPointerCapture(e.pointerId);
               dragRef.current = {
                 id: hit.id, offsetX: point.x - hit.x, offsetY: point.y - hit.y,
@@ -524,6 +564,18 @@ export default function App() {
         <button aria-label="Undo last loop" disabled={!placements.length} onClick={() => updatePlacements(placementsRef.current.slice(0, -1))}>↶ <span>Undo</span></button>
         <button disabled={!placements.length} onClick={() => updatePlacements([])}>Clear</button>
       </div>
+    </section>
+    <section className="motionControls" aria-label="Circle motion">
+      <span>Motion</span>
+      <div className="modePicker">
+        {(['off', 'breathe', 'sway'] as const).map(value => <button key={value} disabled={!hasImage}
+          aria-pressed={motion === value} className={motion === value ? 'selected' : ''}
+          onClick={() => {
+            motionRef.current = value; setMotion(value); motionSecondsRef.current = 0;
+            music.updatePlacements([...placementsRef.current, ...livePlacementsRef.current.values()]);
+          }}>{value === 'off' ? 'Off' : value === 'breathe' ? 'Breathe' : 'Sway'}</button>)}
+      </div>
+      <small>{motion === 'sway' ? 'Drift across colors · sound follows' : motion === 'breathe' ? 'Gently expand and settle' : 'Keep circles still'}</small>
     </section>
     <div className={`dockRegion ${sheet ? 'sheetExpanded' : ''}`}>
     <nav className="instrumentDock" aria-label="Instruments and mix">

@@ -468,3 +468,9 @@ html, body, #root, .app, .app * {
   -webkit-touch-callout: none;
 }
 .canvas { -webkit-user-drag: none; }
+
+.motionControls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.motionControls > span { font-size: 12px; color: #ccc; }
+.motionControls small { font-size: 11px; color: #888; }
+.motionControls .modePicker button { padding: 8px 13px; }
+@media (max-width: 700px) { .motionControls small { flex-basis: 100%; } }
