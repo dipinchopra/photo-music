@@ -1,13 +1,14 @@
 import type { Placement } from './music';
 import type { Bounds } from './scene';
 
-export type VisualMode = 'living' | 'fragments' | 'ribbons' | 'shapes' | 'collage' | 'quilt';
+export type VisualMode = 'living' | 'fragments' | 'ribbons' | 'shapes' | 'collage' | 'displaced' | 'quilt';
 export const VISUAL_MODES: { id: VisualMode; label: string; description: string }[] = [
   { id: 'living', label: 'Living photo', description: 'Soft refraction with + markers, including in recordings.' },
   { id: 'fragments', label: 'Floating fragments', description: 'Organic pieces of the photo lift and drift together.' },
   { id: 'ribbons', label: 'Photo ribbons', description: 'Strips of the image bend into flowing, layered ribbons.' },
   { id: 'shapes', label: 'Instrument shapes', description: 'Colored borders. Keys: circles. Guitar: leaves. Bass: squares. Drums: diamonds.' },
-  { id: 'collage', label: 'Shuffle collage', description: 'One photo crop per tap. Notes slide and stretch the image inside your tile.' },
+  { id: 'collage', label: 'Photo zoom', description: 'One tile magnifies the photo underneath it. Notes slide and stretch its crop.' },
+  { id: 'displaced', label: 'Displaced photo', description: 'One tile shows a different part of your photo. Drag it around while its source stays fixed.' },
   { id: 'quilt', label: 'Color quilt', description: 'One solid square per tap, colored by instrument. Layer and move squares across your photo.' },
 ];
 export type Point = { x: number; y: number };
@@ -16,7 +17,7 @@ export const showsPlacementMarker = (mode: VisualMode) => mode === 'living';
 /** This same outline drives drawing, hit testing, and rim removal. */
 export function visualOutline(placement: Placement, mode: VisualMode, time = 0): Point[] {
   const { x, y, radius: r, id } = placement;
-  if (mode === 'collage' || mode === 'quilt') {
+  if (mode === 'collage' || mode === 'displaced' || mode === 'quilt') {
     return [{ x: x - r, y: y - r }, { x: x + r, y: y - r },
       { x: x + r, y: y + r }, { x: x - r, y: y + r }];
   }
@@ -110,7 +111,7 @@ function photoTile(ctx: CanvasRenderingContext2D, image: CanvasImageSource, boun
 }
 
 function drawTile(ctx: CanvasRenderingContext2D, image: CanvasImageSource, bounds: Bounds,
-  placement: Placement, mode: 'collage' | 'quilt', hit: number, color: string) {
+  placement: Placement, mode: 'collage' | 'displaced' | 'quilt', hit: number, color: string) {
   const { x, y, radius: r, instrument, tone } = placement;
   if (mode === 'quilt') {
     // One opaque, instrument-colored square per placement; no internal grid.
@@ -124,9 +125,15 @@ function drawTile(ctx: CanvasRenderingContext2D, image: CanvasImageSource, bound
   const shiftX = instrument === 'keys' ? hit * r * 0.18 : 0;
   const shiftY = instrument === 'guitar' ? hit * r * 0.18 : 0;
   const hue = tone?.hue ?? 35;
+  // A stable source anchor makes this a movable photo fragment rather than
+  // another lens. Dragging changes its destination, not its source location.
+  const u = 0.12 + ((placement.id * 0.61803398875 + 0.17) % 1) * 0.76;
+  const v = 0.12 + ((placement.id * 0.41421356237 + 0.39) % 1) * 0.76;
+  const sourceX = mode === 'displaced' ? bounds.x + bounds.width * u
+    : x + r * 0.2 + Math.sin(hue * Math.PI / 180) * r * 0.12;
+  const sourceY = mode === 'displaced' ? bounds.y + bounds.height * v : y - r * 0.12;
   photoTile(ctx, image, bounds, x - r, y - r, r * 2, r * 2,
-    x + r * 0.2 + shiftX + Math.sin(hue * Math.PI / 180) * r * 0.12,
-    y - r * 0.12 + shiftY, 1.16 + hit * (instrument === 'bass' ? 0.2 : 0.06));
+    sourceX + shiftX, sourceY + shiftY, (mode === 'displaced' ? 1 : 1.16) + hit * (instrument === 'bass' ? 0.2 : 0.06));
   ctx.strokeStyle = 'rgba(255,255,255,.4)'; ctx.lineWidth = 1; ctx.stroke();
   ctx.restore();
 }
@@ -137,7 +144,7 @@ export function drawVisual(ctx: CanvasRenderingContext2D, image: CanvasImageSour
   ctx.scale(dpr, dpr);
   ctx.beginPath(); ctx.rect(bounds.x, bounds.y, bounds.width, bounds.height); ctx.clip();
   const { x, y, radius: r, id } = placement;
-  if (mode === 'collage' || mode === 'quilt') {
+  if (mode === 'collage' || mode === 'displaced' || mode === 'quilt') {
     drawTile(ctx, image, bounds, placement, mode, hit, color);
   } else if (mode === 'living') {
     // Feathered concentric bands make a continuous, frameless distortion field.
@@ -211,8 +218,8 @@ export function drawPlacementMarker(ctx: CanvasRenderingContext2D, bounds: Bound
   ctx.save();
   ctx.scale(dpr, dpr);
   ctx.beginPath(); ctx.rect(bounds.x, bounds.y, bounds.width, bounds.height); ctx.clip();
-  // Draw the small marker on whole output pixels. Fractional moving positions
-  // otherwise make one arm blur or narrow while the other stays sharp.
+  // Keep arm dimensions consistent, but retain fractional positions so slow
+  // sway never jumps between whole pixels. No hit animation moves the marker.
   const transform = ctx.getTransform();
   const unit = Math.min(Math.hypot(transform.a, transform.b), Math.hypot(transform.c, transform.d));
   const width = Math.max(1, Math.round(1.75 * unit));
@@ -220,9 +227,8 @@ export function drawPlacementMarker(ctx: CanvasRenderingContext2D, bounds: Bound
   const inset = (arm + width / 2 + unit) / unit;
   const markerX = Math.max(bounds.x + Math.min(inset, bounds.width / 2), Math.min(bounds.x + bounds.width - inset, placement.x));
   const markerY = Math.max(bounds.y + Math.min(inset, bounds.height / 2), Math.min(bounds.y + bounds.height - inset, placement.y));
-  const snap = (value: number) => Math.round(value - width / 2) + width / 2;
-  const x = snap(transform.a * markerX + transform.c * markerY + transform.e);
-  const y = snap(transform.b * markerX + transform.d * markerY + transform.f);
+  const x = transform.a * markerX + transform.c * markerY + transform.e;
+  const y = transform.b * markerX + transform.d * markerY + transform.f;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.beginPath();
   ctx.moveTo(x - arm, y); ctx.lineTo(x + arm, y);

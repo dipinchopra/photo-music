@@ -6,8 +6,8 @@ const source = stripTypeScriptTypes(readFileSync(new URL('../src/visuals.ts', im
 const { VISUAL_MODES, visualOutline, hitVisual, findEditablePlacement, findDraggablePlacement, drawVisual, drawPlacementMarker, showsPlacementMarker } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 const placement = { id: 1, x: 200, y: 200, radius: 50, instrument: 'keys' };
 
-test('all six treatments have valid hit targets; Keys shares the living circle outline', () => {
-  assert.equal(VISUAL_MODES.length, 6);
+test('all seven treatments have valid hit targets; Keys shares the living circle outline', () => {
+  assert.equal(VISUAL_MODES.length, 7);
   const outlines = new Set();
   for (const mode of VISUAL_MODES) {
     const points = visualOutline(placement, mode.id);
@@ -127,9 +127,9 @@ test('single tiles remain stable between notes and respond to note hits', () => 
 });
 
 test('photo tile source crops remain valid at photo edges for display and export caches', () => {
-  for (const mode of ['collage', 'quilt']) for (const [x, y] of [[0, 0], [400, 300], [200, 150]]) {
+  for (const mode of ['collage', 'displaced', 'quilt']) for (const [x, y] of [[0, 0], [400, 300], [200, 150]]) {
     const crops = tileSnapshot(mode, tileTone, 1, x, y).filter(call => call[0] === 'drawImage');
-    assert.equal(crops.length, mode === 'collage' ? 1 : 0);
+    assert.equal(crops.length, mode === 'quilt' ? 0 : 1);
     for (const [, , sx, sy, sw, sh] of crops) {
       assert.ok(sx >= 0 && sy >= 0 && sw > 0 && sh > 0);
       assert.ok(sx + sw <= 1200 + 1e-9 && sy + sh <= 900 + 1e-9);
@@ -143,4 +143,28 @@ test('quilt draws exactly one instrument-colored square per placement', () => {
   assert.equal(calls.filter(c => c[0] === 'fillRect').length, 1);
   assert.ok(calls.some(c => c[0] === 'set' && c[1] === 'fillStyle' && c[2] === '#8be9fd'));
   assert.equal(calls.some(c => c[0] === 'drawImage'), false);
+});
+
+
+test('displaced photo keeps a remote source crop fixed while the tile is dragged', () => {
+  const crop = calls => calls.find(call => call[0] === 'drawImage');
+  const local = crop(tileSnapshot('collage', tileTone));
+  const remote = crop(tileSnapshot('displaced', tileTone));
+  const moved = crop(tileSnapshot('displaced', tileTone, 0, 80, 60));
+  assert.notDeepEqual(remote.slice(2, 6), local.slice(2, 6));
+  assert.deepEqual(moved.slice(2, 6), remote.slice(2, 6), 'dragging does not change the source');
+  assert.notDeepEqual(moved.slice(6), remote.slice(6), 'the destination follows the drag');
+});
+
+test('plus markers follow fractional motion continuously without whole-pixel jumps', () => {
+  const start = x => {
+    const calls = [];
+    const ctx = new Proxy({}, { get: (_, key) => key === 'getTransform'
+      ? () => ({a: 1, b: 0, c: 0, d: 1, e: 0, f: 0})
+      : (...args) => calls.push([key, ...args]), set: () => true });
+    drawPlacementMarker(ctx, {x: 0, y: 0, width: 400, height: 300}, { ...placement, x }, '#8be9fd');
+    return calls.find(c => c[0] === 'moveTo')[1];
+  };
+  assert.ok(Math.abs(start(200.2) - start(200.1) - .1) < 1e-9);
+  assert.equal(start(200.2), start(200.2), 'a stationary marker stays stationary');
 });

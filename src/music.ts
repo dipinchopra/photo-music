@@ -260,7 +260,7 @@ export class ChordEngine {
       this.timbreBindings.get(placement.id)?.forEach(binding => {
         const colour = (tone: ImageTone) => 0.3 + tone.brightness * 1.1 + tone.saturation * 0.6;
         const ratio = colour(placement.tone) / colour(binding.tone);
-        binding.filter.frequency.setTargetAtTime(Math.max(100, Math.min(16000, binding.cutoff * ratio)), this.context!.currentTime, 0.04);
+        binding.filter.frequency.setTargetAtTime(Math.max(100, Math.min(16000, this.context!.sampleRate * 0.45, binding.cutoff * ratio)), this.context!.currentTime, 0.04);
         const level = (0.7 + placement.tone.brightness * 0.6) / (0.7 + binding.tone.brightness * 0.6);
         binding.colourGain.gain.setTargetAtTime(Math.max(0.6, Math.min(1.4, level)), this.context!.currentTime, 0.04);
       });
@@ -270,6 +270,11 @@ export class ChordEngine {
   private tone(frequency: number, volume: number, duration: number, type: OscillatorType,
     cutoff: number, attack = 0.015, send = 0) {
     if (!this.context || !this.output) return;
+    // Short upper-partial attacks read as clicks on small speakers. Fade them
+    // in gently and omit partials too close to the output's Nyquist frequency.
+    if (frequency >= Math.min(14000, this.context.sampleRate * 0.45)) return;
+    attack = Math.max(0.008, Math.min(attack, duration * 0.45));
+    volume /= Math.sqrt(1 + Math.pow(frequency / 5500, 4));
     const now = this.noteTime;
     const osc = this.context.createOscillator();
     const gain = this.context.createGain();
@@ -279,7 +284,7 @@ export class ChordEngine {
     osc.type = type;
     osc.frequency.value = frequency;
     filter.type = 'lowpass';
-    filter.frequency.value = cutoff;
+    filter.frequency.value = Math.min(cutoff, this.context.sampleRate * 0.45);
     gain.gain.setValueAtTime(0.0001, now);
     gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, volume), now + attack);
     gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);

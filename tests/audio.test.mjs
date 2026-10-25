@@ -10,11 +10,12 @@ const { ChordEngine } = await import(encode(musicSource));
 const { composeImage } = await import(compositionUrl);
 
 class Param {
+  events = [];
   value = 0;
-  setValueAtTime(v) { this.value = v; }
+  setValueAtTime(v, time) { this.value = v; this.events.push({kind: 'set', value: v, time}); }
   setTargetAtTime(v, time, constant) { this.value = v; this.target = { v, time, constant }; }
   cancelAndHoldAtTime(time) { this.heldAt = time; }
-  exponentialRampToValueAtTime(v) { this.value = v; }
+  exponentialRampToValueAtTime(v, time) { this.value = v; this.events.push({kind: 'exponential', value: v, time}); }
   cancelScheduledValues() {}
 }
 class Node {
@@ -340,4 +341,26 @@ test('rapid pad playing is bounded and decoded samples survive audio context rep
     assert.equal(await engine.playSample(0, placement), true);
     assert.equal(downloads, 16, 'a recovered context reuses the decoded kit');
   } finally { globalThis.fetch = originalFetch; }
+});
+
+
+test('bright Place Loops partials have softened attacks and stay below the output Nyquist limit', async () => {
+  const engine = new ChordEngine();
+  engine.setComposition({ ...composeImage([cell]), style: 'glass' });
+  await engine.unlock();
+  const context = Context.instances.at(-1);
+  engine.voice(700, .1, .4, .9, .002, 0);
+  assert.equal(context.oscillators.length, 3);
+  for (const osc of context.oscillators) {
+    assert.ok(osc.frequency.value < context.sampleRate * .45);
+    const filter = osc.connections[0];
+    assert.ok(filter.frequency.value <= context.sampleRate * .45);
+    const events = filter.connections[0].gain.events;
+    assert.equal(events[0].value, .0001);
+    assert.ok(events[1].time - osc.startTime >= .008, 'upper partials must not have click-like 2ms attacks');
+    assert.equal(events.at(-1).value, .0001);
+  }
+  const before = context.oscillators.length;
+  engine.tone(context.sampleRate * .48, .1, .3, 'sine', 12000, .002);
+  assert.equal(context.oscillators.length, before, 'inaudible/alias-prone partials are omitted');
 });
