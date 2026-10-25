@@ -3,10 +3,10 @@ import type { Bounds } from './scene';
 
 export type VisualMode = 'living' | 'fragments' | 'ribbons' | 'shapes';
 export const VISUAL_MODES: { id: VisualMode; label: string; description: string }[] = [
-  { id: 'living', label: 'Living photo', description: 'Soft refraction blends into the photograph without markers.' },
+  { id: 'living', label: 'Living photo', description: 'Soft refraction with + markers, including in recordings.' },
   { id: 'fragments', label: 'Floating fragments', description: 'Organic pieces of the photo lift and drift together.' },
   { id: 'ribbons', label: 'Photo ribbons', description: 'Strips of the image bend into flowing, layered ribbons.' },
-  { id: 'shapes', label: 'Instrument shapes', description: 'Colored borders with + markers. Keys: circles. Guitar: leaves. Bass: squares. Drums: diamonds.' },
+  { id: 'shapes', label: 'Instrument shapes', description: 'Colored borders. Keys: circles. Guitar: leaves. Bass: squares. Drums: diamonds.' },
 ];
 export type Point = { x: number; y: number };
 

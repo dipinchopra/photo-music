@@ -236,10 +236,8 @@ export default function App() {
       const color = INSTRUMENTS.find(item => item.id === placement.instrument)!.color;
       drawVisual(target, photo, { x: dx / dpr, y: dy / dpr, width: dw / dpr, height: dh / dpr },
         placement, visualModeRef.current, visualTime, visualHitsRef.current.get(placement.id) ?? 0, color, scale);
-      if (visualModeRef.current === 'shapes') drawPlacementMarker(target,
-        { x: dx / dpr, y: dy / dpr, width: dw / dpr, height: dh / dpr }, placement, color, scale);
       });
-      if (visualModeRef.current !== 'shapes' && visualModeRef.current !== 'living') drawnPlacements.forEach(placement => drawPlacementMarker(target,
+      if (visualModeRef.current === 'living') drawnPlacements.forEach(placement => drawPlacementMarker(target,
         { x: dx / dpr, y: dy / dpr, width: dw / dpr, height: dh / dpr }, placement,
         INSTRUMENTS.find(item => item.id === placement.instrument)!.color, scale));
     };
