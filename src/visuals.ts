@@ -69,9 +69,13 @@ export function hitVisual(placement: Placement, mode: VisualMode, x: number, y: 
 }
 
 /** Never reach through another instrument to remove a shape underneath it. */
+export function findDraggablePlacement(placements: Placement[], mode: VisualMode, x: number, y: number, time = 0) {
+  return [...placements].reverse().find(placement => hitVisual(placement, mode, x, y, time));
+}
+
 export function findEditablePlacement(placements: Placement[], instrument: Placement['instrument'], mode: VisualMode,
   x: number, y: number, time = 0) {
-  const top = [...placements].reverse().find(placement => hitVisual(placement, mode, x, y, time));
+  const top = findDraggablePlacement(placements, mode, x, y, time);
   return top?.instrument === instrument ? top : undefined;
 }
 

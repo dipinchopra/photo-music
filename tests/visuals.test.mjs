@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 const source = stripTypeScriptTypes(readFileSync(new URL('../src/visuals.ts', import.meta.url), 'utf8'));
-const { VISUAL_MODES, visualOutline, hitVisual, findEditablePlacement, drawVisual, drawPlacementMarker } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+const { VISUAL_MODES, visualOutline, hitVisual, findEditablePlacement, findDraggablePlacement, drawVisual, drawPlacementMarker } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 const placement = { id: 1, x: 200, y: 200, radius: 50, instrument: 'keys' };
 
 test('all four treatments have valid hit targets; Keys shares the living circle outline', () => {
@@ -79,5 +79,19 @@ test('every visual mode keeps a plus marker without a surrounding outline', () =
     assert.ok(strokes.some(s => s.color === '#8be9fd' && s.alpha === 1), id);
     assert.equal(paths.filter(p => p[0] === 'lineTo').length, 2);
     assert.equal(paths.some(p => p[0] === 'arc' || p[0] === 'closePath'), false);
+  }
+});
+
+
+test('dragging targets any topmost instrument without switching the selected instrument', () => {
+  const piano = { ...placement, id: 1, instrument: 'keys' };
+  const drums = { ...placement, id: 2, instrument: 'drums' };
+  for (const { id } of VISUAL_MODES) {
+    assert.equal(findDraggablePlacement([piano], id, 200, 200), piano);
+    assert.equal(findDraggablePlacement([piano, drums], id, 200, 200), drums);
+    assert.equal(findDraggablePlacement([drums, piano], id, 200, 200), piano);
+    assert.equal(findDraggablePlacement([piano, drums], id, 900, 900), undefined);
+    assert.equal(findEditablePlacement([piano, drums], 'keys', id, 200, 200), undefined,
+      'a cross-instrument tap still adds instead of deleting the drag target');
   }
 });

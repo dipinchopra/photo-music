@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { sampleAverageColor } from './color';
 import { composeImage, type ArpMode } from './composition';
 import { photoBounds, recordingSize, moveCircle, type Motion } from './scene';
-import { drawVisual, drawPlacementMarker, findEditablePlacement, VISUAL_MODES, type VisualMode } from './visuals';
+import { drawVisual, drawPlacementMarker, findDraggablePlacement, VISUAL_MODES, type VisualMode } from './visuals';
 import { EditHistory } from './history';
 import { PlaybackRecovery } from './playback';
 import { ChordEngine, type Instrument, type Placement } from './music';
@@ -47,7 +47,7 @@ export default function App() {
   const visualHitsRef = useRef(new Map<number, number>());
   const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
   const dragRef = useRef<{
-    id: number; offsetX: number; offsetY: number; startX: number; startY: number; moved: boolean; before: Placement[];
+    id: number; offsetX: number; offsetY: number; startX: number; startY: number; moved: boolean; before: Placement[]; removeOnTap: boolean;
   } | null>(null);
   const nextIdRef = useRef(1);
   const historyRef = useRef(new EditHistory<Placement[]>());
@@ -595,7 +595,7 @@ export default function App() {
             dragRef.current = null;
             pointerStartRef.current = null;
             const point = canvasPoint(e.clientX, e.clientY);
-            const hit = findEditablePlacement(scenePlacements(), selected, visualModeRef.current,
+            const hit = findDraggablePlacement(scenePlacements(), visualModeRef.current,
               point.x, point.y, motionRef.current === 'off' ? 0 : motionSecondsRef.current);
             if (hit) {
               const before = placementsRef.current;
@@ -604,6 +604,7 @@ export default function App() {
               dragRef.current = {
                 id: hit.id, offsetX: point.x - hit.x, offsetY: point.y - hit.y,
                 startX: e.clientX, startY: e.clientY, moved: false,
+                removeOnTap: hit.instrument === selected,
                 before,
               };
             } else pointerStartRef.current = { x: e.clientX, y: e.clientY };
@@ -629,11 +630,16 @@ export default function App() {
             const drag = dragRef.current;
             if (drag) {
               dragRef.current = null;
-              motionStartsRef.current.set(drag.id, motionSecondsRef.current);
               if (!drag.moved) {
-                updatePlacements(placementsRef.current.filter(placement => placement.id !== drag.id), 0.12, true, drag.before);
+                if (drag.removeOnTap) {
+                  updatePlacements(placementsRef.current.filter(placement => placement.id !== drag.id), 0.12, true, drag.before);
+                } else {
+                  placementsRef.current = drag.before;
+                  void placeAt(e.clientX, e.clientY);
+                }
                 return;
               }
+              motionStartsRef.current.set(drag.id, motionSecondsRef.current);
               const next = placementsRef.current.map((placement) => {
                 if (placement.id !== drag.id) return placement;
                 const tone = sampleToneAt(placement.x, placement.y, placement.radius);
