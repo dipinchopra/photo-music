@@ -29,3 +29,10 @@ export function moveCircle(placement: Placement, motion: Motion, seconds: number
       Math.min(placement.y, bounds.y + margin), Math.max(placement.y, bounds.y + bounds.height - margin)),
   };
 }
+
+
+/** Keep the interior available for stacking; the visible rim is the remove target. */
+export function circleTapAction(placement: Placement, x: number, y: number): 'place' | 'remove' {
+  const distance = Math.hypot(x - placement.x, y - placement.y);
+  return Math.abs(distance - placement.radius) <= Math.min(12, placement.radius * 0.25) ? 'remove' : 'place';
+}

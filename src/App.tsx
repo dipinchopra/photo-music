@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { sampleAverageColor } from './color';
 import { composeImage, type ArpMode } from './composition';
-import { photoBounds, recordingSize, moveCircle, type Motion } from './scene';
+import { photoBounds, recordingSize, moveCircle, circleTapAction, type Motion } from './scene';
 import { refractPhoto, drawGlassRim } from './glass';
 import { ChordEngine, type Instrument, type Placement } from './music';
 
@@ -38,6 +38,7 @@ function Arpeggiator({ mode, rate, onMode, onRate }: {
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
+  const shadeCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const toneCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const placementsRef = useRef<Placement[]>([]);
   const livePlacementsRef = useRef(new Map<number, Placement>());
@@ -45,7 +46,7 @@ export default function App() {
   const visualHitsRef = useRef(new Map<number, number>());
   const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
   const dragRef = useRef<{
-    id: number; offsetX: number; offsetY: number; startX: number; startY: number; moved: boolean;
+    id: number; offsetX: number; offsetY: number; startX: number; startY: number; moved: boolean; tapAction: 'place' | 'remove';
   } | null>(null);
   const nextIdRef = useRef(1);
 
@@ -210,16 +211,23 @@ export default function App() {
     });
 
     if (drawnPlacements.length) {
-      ctx.save();
-      ctx.fillStyle = 'rgba(0,0,0,.16)';
-      ctx.beginPath();
-      ctx.rect(0, 0, width, height);
-      drawnPlacements.forEach((placement) => {
-        ctx.moveTo((placement.x + placement.radius) * dpr, placement.y * dpr);
-        ctx.arc(placement.x * dpr, placement.y * dpr, placement.radius * dpr, 0, Math.PI * 2);
-      });
-      ctx.fill('evenodd');
-      ctx.restore();
+      const shade = shadeCanvasRef.current ?? document.createElement('canvas');
+      shadeCanvasRef.current = shade;
+      if (shade.width !== width || shade.height !== height) { shade.width = width; shade.height = height; }
+      const mask = shade.getContext('2d');
+      if (mask) {
+        mask.clearRect(0, 0, width, height);
+        mask.globalCompositeOperation = 'source-over';
+        mask.fillStyle = 'rgba(0,0,0,.16)';
+        mask.fillRect(0, 0, width, height);
+        mask.globalCompositeOperation = 'destination-out';
+        mask.fillStyle = '#000';
+        drawnPlacements.forEach(placement => {
+          mask.beginPath(); mask.arc(placement.x * dpr, placement.y * dpr, placement.radius * dpr, 0, Math.PI * 2); mask.fill();
+        });
+        mask.globalCompositeOperation = 'source-over';
+        ctx.drawImage(shade, 0, 0);
+      }
     }
 
     drawnPlacements.forEach((placement) => {
@@ -542,6 +550,7 @@ export default function App() {
               dragRef.current = {
                 id: hit.id, offsetX: point.x - hit.x, offsetY: point.y - hit.y,
                 startX: e.clientX, startY: e.clientY, moved: false,
+                tapAction: circleTapAction(hit, point.x, point.y),
               };
             } else pointerStartRef.current = { x: e.clientX, y: e.clientY };
           }}
@@ -568,7 +577,8 @@ export default function App() {
               dragRef.current = null;
               motionStartsRef.current.set(drag.id, motionSecondsRef.current);
               if (!drag.moved) {
-                updatePlacements(placementsRef.current.filter(placement => placement.id !== drag.id));
+                if (drag.tapAction === 'remove') updatePlacements(placementsRef.current.filter(placement => placement.id !== drag.id));
+                else void placeAt(e.clientX, e.clientY);
                 return;
               }
               const next = placementsRef.current.map((placement) => {
@@ -686,7 +696,7 @@ export default function App() {
           <label><span>Space <output>{controls.space}%</output></span><small>Adds echo and atmospheric depth.</small>
             <Slider value={controls.space} onChange={(value) => setControl('space', value)} /></label></div>}
 
-        {sheet === 'mix' && <label className="sizeControl"><span>Circle size <output>{Math.round(radius)}px</output></span><Slider min={28} max={90} value={radius} onChange={setRadius} /><small>Larger circles sample more color and play louder.</small></label>}
+        {sheet === 'mix' && <label className="sizeControl"><span>Circle size <output>{Math.round(radius)}px</output></span><Slider min={28} max={90} value={radius} onChange={setRadius} /><small>Tap inside to layer. Tap a rim to remove. Drag to move.</small></label>}
       </div>
     </section>
     </div>
