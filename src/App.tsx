@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { sampleAverageColor } from './color';
 import { composeImage, type ArpMode } from './composition';
 import { photoBounds, recordingSize, moveCircle, type Motion } from './scene';
-import { drawVisual, drawLivingHandle, hitVisual, visualTapAction, VISUAL_MODES, type VisualMode } from './visuals';
+import { drawVisual, drawLivingHandle, findEditablePlacement, VISUAL_MODES, type VisualMode } from './visuals';
+import { EditHistory } from './history';
+import { PlaybackRecovery } from './playback';
 import { ChordEngine, type Instrument, type Placement } from './music';
 
 const music = new ChordEngine();
@@ -45,9 +47,12 @@ export default function App() {
   const visualHitsRef = useRef(new Map<number, number>());
   const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
   const dragRef = useRef<{
-    id: number; offsetX: number; offsetY: number; startX: number; startY: number; moved: boolean; tapAction: 'place' | 'remove';
+    id: number; offsetX: number; offsetY: number; startX: number; startY: number; moved: boolean; before: Placement[];
   } | null>(null);
   const nextIdRef = useRef(1);
+  const historyRef = useRef(new EditHistory<Placement[]>());
+  const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false });
+  const recoveryRef = useRef<PlaybackRecovery | null>(null);
 
   const sheetDragStart = useRef<number | null>(null);
   const [sheet, setSheet] = useState<Instrument | 'mix' | 'motion' | 'visuals' | null>(null);
@@ -368,6 +373,7 @@ export default function App() {
     const placement = makePlacementAt(clientX, clientY, nextIdRef.current++);
     if (!placement) return;
     motionStartsRef.current.set(placement.id, motionSecondsRef.current);
+    rememberEdit(placementsRef.current);
     const next = [...placementsRef.current, placement];
     placementsRef.current = next;
     setPlacements(next);
@@ -394,58 +400,72 @@ export default function App() {
     else { stopBeat(); music.stop(); }
   };
 
-  const resumePlayback = async () => {
-    if (document.hidden || !placementsRef.current.length) return;
-    setAudioPaused(!music.running);
-    try {
-      await music.playPlacements(placementsRef.current);
-      if (document.hidden) return;
-      if (music.running) {
-        startBeat();
-      }
-      setAudioPaused(!music.running);
-    } catch { setAudioPaused(true); }
-  };
+  const resumePlayback = () => recoveryRef.current?.resume();
 
   useEffect(() => {
-    music.onPlaybackState = running => {
-      setAudioPaused(!running && placementsRef.current.length > 0 && !document.hidden);
-    };
-    const pause = () => {
-      livePlacementsRef.current.clear();
-      stopBeat();
-      music.stop();
-    };
-    const show = () => {
-      if (document.hidden) pause();
-      else void resumePlayback();
-    };
-    const focus = () => { if (!document.hidden) void resumePlayback(); };
-    const gesture = () => { if (!music.running) void resumePlayback(); };
-    window.addEventListener('blur', pause);
-    window.addEventListener('focus', focus);
-    window.addEventListener('pageshow', focus);
+    const recovery = new PlaybackRecovery({
+      visible: () => !document.hidden,
+      hasLoops: () => placementsRef.current.length > 0,
+      running: () => music.running,
+      play: () => music.playPlacements(placementsRef.current),
+      startScheduler: startBeat,
+      stopScheduler: stopBeat,
+      pauseAudio: () => { livePlacementsRef.current.clear(); music.stop(); },
+      setPaused: setAudioPaused,
+    });
+    recoveryRef.current = recovery;
+    music.onPlaybackState = running => recovery.stateChanged(running);
+    const pause = () => recovery.pause();
+    const resume = () => { void recovery.resume(); };
+    const show = () => { if (document.hidden) pause(); else resume(); };
+    // Blur alone is not a page pause. Visibility/pagehide owns stopping;
+    // focus and pageshow repair both audio and the scheduler.
+    window.addEventListener('focus', resume);
+    window.addEventListener('pageshow', resume);
+    window.addEventListener('pagehide', pause);
     document.addEventListener('visibilitychange', show);
-    document.addEventListener('pointerdown', gesture, true);
-    document.addEventListener('keydown', gesture, true);
+    // A gesture must repair the transport too, even when AudioContext says running.
+    document.addEventListener('pointerdown', resume, true);
+    document.addEventListener('keydown', resume, true);
     return () => {
+      recovery.dispose(); recoveryRef.current = null;
       music.onPlaybackState = null;
-      window.removeEventListener('blur', pause);
-      window.removeEventListener('focus', focus);
-      window.removeEventListener('pageshow', focus);
+      window.removeEventListener('focus', resume);
+      window.removeEventListener('pageshow', resume);
+      window.removeEventListener('pagehide', pause);
       document.removeEventListener('visibilitychange', show);
-      document.removeEventListener('pointerdown', gesture, true);
-      document.removeEventListener('keydown', gesture, true);
+      document.removeEventListener('pointerdown', resume, true);
+      document.removeEventListener('keydown', resume, true);
     };
   }, []);
 
-  const updatePlacements = (next: Placement[], release = 0.12) => {
+  const syncHistory = () => setHistoryState({ canUndo: historyRef.current.canUndo, canRedo: historyRef.current.canRedo });
+  const rememberEdit = (before: Placement[]) => { historyRef.current.record(before); syncHistory(); };
+  const undoEdit = () => {
+    const previous = historyRef.current.undo(placementsRef.current);
+    if (previous) updatePlacements(previous, 0.12, false);
+    syncHistory();
+  };
+  const redoEdit = () => {
+    const next = historyRef.current.redo(placementsRef.current);
+    if (next) updatePlacements(next, 0.12, false);
+    syncHistory();
+  };
+
+  const updatePlacements = (next: Placement[], release = 0.12, record = true, before = placementsRef.current) => {
+    if (record) rememberEdit(before);
     placementsRef.current = next;
     const ids = new Set(next.map(placement => placement.id));
+    next.forEach(placement => {
+      if (!motionStartsRef.current.has(placement.id)) motionStartsRef.current.set(placement.id, motionSecondsRef.current);
+    });
     motionStartsRef.current.forEach((_, id) => { if (!ids.has(id)) motionStartsRef.current.delete(id); });
     setPlacements(next);
-    if (!next.length) { stopBeat(); music.stop(release); }
-    else void music.playPlacements(next);
+    if (!next.length) { stopBeat(); music.stop(release); setAudioPaused(false); }
+    else {
+      startBeat();
+      void music.playPlacements(next).catch(() => setAudioPaused(true));
+    }
   };
 
   const upload = (file?: File) => {
@@ -480,7 +500,8 @@ export default function App() {
         setControls(current => ({ ...current, tempo: composition.tempo }));
       }
       stopLive();
-      updatePlacements([]);
+      updatePlacements([], 0.12, false);
+      historyRef.current.clear(); syncHistory();
       setHasImage(true);
       URL.revokeObjectURL(url);
     };
@@ -519,15 +540,16 @@ export default function App() {
               return;
             }
             const point = canvasPoint(e.clientX, e.clientY);
-            const hit = [...scenePlacements()].reverse().find((placement) =>
-              hitVisual(placement, visualModeRef.current, point.x, point.y, motionRef.current === 'off' ? 0 : motionSecondsRef.current));
+            const hit = findEditablePlacement(scenePlacements(), selected, visualModeRef.current,
+              point.x, point.y, motionRef.current === 'off' ? 0 : motionSecondsRef.current);
             if (hit) {
+              const before = placementsRef.current;
               placementsRef.current = placementsRef.current.map(placement => placement.id === hit.id ? hit : placement);
               e.currentTarget.setPointerCapture(e.pointerId);
               dragRef.current = {
                 id: hit.id, offsetX: point.x - hit.x, offsetY: point.y - hit.y,
                 startX: e.clientX, startY: e.clientY, moved: false,
-                tapAction: visualTapAction(hit, visualModeRef.current, point.x, point.y, motionRef.current === 'off' ? 0 : motionSecondsRef.current),
+                before,
               };
             } else pointerStartRef.current = { x: e.clientX, y: e.clientY };
           }}
@@ -554,8 +576,7 @@ export default function App() {
               dragRef.current = null;
               motionStartsRef.current.set(drag.id, motionSecondsRef.current);
               if (!drag.moved) {
-                if (drag.tapAction === 'remove') updatePlacements(placementsRef.current.filter(placement => placement.id !== drag.id));
-                else void placeAt(e.clientX, e.clientY);
+                updatePlacements(placementsRef.current.filter(placement => placement.id !== drag.id), 0.12, true, drag.before);
                 return;
               }
               const next = placementsRef.current.map((placement) => {
@@ -563,7 +584,7 @@ export default function App() {
                 const tone = sampleToneAt(placement.x, placement.y, placement.radius);
                 return tone ? { ...placement, tone } : placement;
               });
-              updatePlacements(next);
+              updatePlacements(next, 0.12, true, drag.before);
               return;
             }
             const start = pointerStartRef.current;
@@ -573,7 +594,9 @@ export default function App() {
           onLostPointerCapture={e => { if (mode === 'live') stopLive(e.pointerId); }}
           onPointerCancel={(e) => {
             if (mode === 'live') stopLive(e.pointerId);
+            const drag = dragRef.current;
             dragRef.current = null; pointerStartRef.current = null;
+            if (drag) updatePlacements(drag.before, 0.12, false);
           }}
           onPointerLeave={(e) => { if (mode === 'live' && e.pointerType === 'mouse') stopLive(e.pointerId); }} />
         {hasImage && !placements.length && <div className="hint">{mode === 'live'
@@ -587,7 +610,8 @@ export default function App() {
         <button aria-pressed={mode === 'live'} className={mode === 'live' ? 'selected' : ''} onClick={() => { stopLive(); setMode('live'); }}>Play live</button>
       </div>
       <div className="placementActions">
-        <button aria-label="Undo last loop" disabled={!placements.length} onClick={() => updatePlacements(placementsRef.current.slice(0, -1))}>↶ <span>Undo</span></button>
+        <button aria-label="Undo last edit" disabled={!historyState.canUndo} onClick={undoEdit}>↶ <span>Undo</span></button>
+        <button aria-label="Redo last edit" disabled={!historyState.canRedo} onClick={redoEdit}>↷ <span>Redo</span></button>
         <button disabled={!placements.length} onClick={() => { livePlacementsRef.current.clear(); updatePlacements([], 0.9); }}>Clear</button>
       </div>
     </section>
@@ -683,7 +707,7 @@ export default function App() {
           <label><span>Space <output>{controls.space}%</output></span><small>Adds echo and atmospheric depth.</small>
             <Slider value={controls.space} onChange={(value) => setControl('space', value)} /></label></div>}
 
-        {sheet === 'mix' && <label className="sizeControl"><span>Circle size <output>{Math.round(radius)}px</output></span><Slider min={28} max={90} value={radius} onChange={setRadius} /><small>{visualMode === 'living' ? 'Tap the photo to layer. Tap a small handle to remove. Drag to move.' : 'Tap inside to layer. Tap an edge to remove. Drag to move.'}</small></label>}
+        {sheet === 'mix' && <label className="sizeControl"><span>Circle size <output>{Math.round(radius)}px</output></span><Slider min={28} max={90} value={radius} onChange={setRadius} /><small>Tap again with the same instrument to remove. Choose another instrument to layer. Drag to move.</small></label>}
       </div>
     </section>
     </div>

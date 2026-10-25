@@ -69,10 +69,10 @@ export function hitVisual(placement: Placement, mode: VisualMode, x: number, y: 
   return inside || edgeDistance(points, x, y) <= 5;
 }
 
-export function visualTapAction(placement: Placement, mode: VisualMode, x: number, y: number, time = 0): 'place' | 'remove' {
-  if (mode === 'living') return Math.hypot(x - placement.x, y - placement.y) <= 14 ? 'remove' : 'place';
-  const rim = mode === 'ribbons' ? Math.min(4, placement.radius * 0.08) : Math.min(10, placement.radius * 0.22);
-  return edgeDistance(visualOutline(placement, mode, time), x, y) <= rim ? 'remove' : 'place';
+/** Only the selected instrument is editable; other instruments remain layerable. */
+export function findEditablePlacement(placements: Placement[], instrument: Placement['instrument'], mode: VisualMode,
+  x: number, y: number, time = 0) {
+  return [...placements].reverse().find(placement => placement.instrument === instrument && hitVisual(placement, mode, x, y, time));
 }
 
 function drawPhoto(ctx: CanvasRenderingContext2D, image: HTMLImageElement, bounds: Bounds,

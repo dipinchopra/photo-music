@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 const source = stripTypeScriptTypes(readFileSync(new URL('../src/scene.ts', import.meta.url), 'utf8'));
-const { photoBounds, recordingSize, moveCircle, circleTapAction } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+const { photoBounds, recordingSize, moveCircle } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 
 test('recording crop excludes margins for landscape and portrait photos', () => {
   assert.deepEqual(photoBounds(400, 400, 1600, 900), { x: 0, y: 87.5, width: 400, height: 225 });
@@ -59,12 +59,4 @@ test('switching motion or amount from the visible pose never jumps, including at
       }
     }
   }
-});
-
-
-test('circle interiors allow exact stacking while rims retain tap-to-remove', () => {
-  assert.equal(circleTapAction(circle, 200, 200), 'place');
-  assert.equal(circleTapAction(circle, 215, 205), 'place');
-  assert.equal(circleTapAction(circle, 240, 200), 'remove');
-  assert.equal(circleTapAction(circle, 200, 235), 'remove');
 });
