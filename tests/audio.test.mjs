@@ -194,3 +194,25 @@ test('stopping cancels scheduled melody and drum sources before they sound', asy
   engine.schedule();
   assert.equal(context.oscillators.length, count);
 });
+
+
+test('Keys and Guitar arpeggiators produce ascending notes at the chosen rate', async () => {
+  for (const instrument of ['keys', 'guitar']) {
+    for (const rate of [1, 2]) {
+      const engine = new ChordEngine();
+      engine.setComposition({ ...composeImage([cell]), style: 'plucked' });
+      engine.configure({ [`${instrument}Arp`]: 'up', [`${instrument}ArpRate`]: rate });
+      await engine.playPlacements([{ ...placement, instrument }]);
+      const context = Context.instances.at(-1);
+      const frequencies = [context.oscillators[0].frequency.value];
+      for (let step = 1; step < 8; step++) {
+        const before = context.oscillators.length;
+        engine.pulse();
+        const added = context.oscillators.length > before;
+        assert.equal(added, step % rate === 0);
+        if (added) frequencies.push(context.oscillators[before].frequency.value);
+      }
+      assert.ok(frequencies[0] < frequencies[1] && frequencies[1] < frequencies[2] && frequencies[2] < frequencies[3]);
+    }
+  }
+});

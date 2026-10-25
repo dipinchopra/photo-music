@@ -1,4 +1,4 @@
-import { composeImage, circleEvent, phraseStep, randomAt, scaleNote, type Composition } from './composition';
+import { composeImage, circleEvent, phraseStep, randomAt, scaleNote, arpeggioDegree, type ArpMode, type Composition } from './composition';
 
 export type Instrument = 'keys' | 'guitar' | 'bass' | 'drums';
 
@@ -29,10 +29,14 @@ type MusicControls = {
   keysTone: number;
   keysSustain: number;
   keysDelay: number;
+  keysArp: ArpMode;
+  keysArpRate: number;
   guitar: number;
   guitarTone: number;
   guitarStrum: number;
   guitarDelay: number;
+  guitarArp: ArpMode;
+  guitarArpRate: number;
   bass: number;
   bassDepth: number;
   bassMovement: number;
@@ -101,8 +105,8 @@ export class ChordEngine {
   }
   private controls: MusicControls = {
     tempo: 96, transpose: 0, complexity: 0.5, space: 0.55,
-    keys: 0.78, keysTone: 0.62, keysSustain: 0.55, keysDelay: 0,
-    guitar: 0.7, guitarTone: 0.58, guitarStrum: 0.5, guitarDelay: 0,
+    keys: 0.78, keysTone: 0.62, keysSustain: 0.55, keysDelay: 0, keysArp: 'off', keysArpRate: 2,
+    guitar: 0.7, guitarTone: 0.58, guitarStrum: 0.5, guitarDelay: 0, guitarArp: 'off', guitarArpRate: 2,
     bass: 0.68, bassDepth: 0.7, bassMovement: 0.45, bassDelay: 0,
     drums: 0.6, drumPunch: 0.7, drumDensity: 0.5, drumDelay: 0, fourOnFloor: false,
   };
@@ -116,9 +120,9 @@ export class ChordEngine {
     this.updateSpace();
   }
 
-  configure(next: MusicControls) {
-    const spaceChanged = next.space !== this.controls.space;
-    this.controls = next;
+  configure(next: Partial<MusicControls>) {
+    const spaceChanged = next.space !== undefined && next.space !== this.controls.space;
+    this.controls = { ...this.controls, ...next };
     if (spaceChanged) this.updateSpace();
   }
 
@@ -338,18 +342,23 @@ export class ChordEngine {
       const placement = keys[lane];
       const melody = circleEvent(composition, placement.tone, this.step, this.controls.complexity, lane, placement.radius);
       const previous = this.keyHistory.get(placement.id);
-      if (!melody.active || !this.controls.keys || keyAttacks >= 2 || (previous && this.step - previous.step < 2)) continue;
+      const arpeggiating = this.controls.keysArp !== 'off';
+      const active = arpeggiating ? this.step % this.controls.keysArpRate === 0 : melody.active;
+      if (!active || !this.controls.keys || keyAttacks >= 2 || (!arpeggiating && previous && this.step - previous.step < 2)) continue;
       const phrase = phraseStep(composition, placement.tone, this.step, this.controls.complexity);
-      const degree = beat % 4 === 0 ? root + [0, 2, 4][Math.abs(phrase.degree) % 3] : phrase.degree;
+      const degree = arpeggiating
+        ? arpeggioDegree(root, this.step, this.controls.keysArp, this.controls.keysArpRate, Math.floor(placement.tone.hue / 90) + lane)
+        : beat % 4 === 0 ? root + [0, 2, 4][Math.abs(phrase.degree) % 3] : phrase.degree;
       const register = placement.tone.brightness > 0.68 ? 36 : 24;
       const pitch = scaleNote(composition, degree) + this.controls.transpose + register;
-      if (previous?.pitch === pitch && this.step - previous.step < 4) continue;
+      if (!arpeggiating && previous?.pitch === pitch && this.step - previous.step < 4) continue;
       hits.add('keys');
       this.placementHit(placement.id);
       this.keyHistory.set(placement.id, { pitch, step: this.step });
       keyAttacks++;
       const secondsPerStep = 60 / this.controls.tempo / 2;
-      const duration = Math.max(0.35, melody.hold * secondsPerStep * (0.7 + this.controls.keysSustain * 0.4));
+      const duration = arpeggiating ? secondsPerStep * this.controls.keysArpRate * (0.5 + this.controls.keysSustain * 0.35)
+        : Math.max(0.35, melody.hold * secondsPerStep * (0.7 + this.controls.keysSustain * 0.4));
       this.voice(hz(pitch), 0.085 * placement.level * this.controls.keys * melody.accent / Math.sqrt(Math.min(keys.length, 3)),
         duration, this.controls.keysTone * 0.55 + placement.tone.saturation * 0.45,
         0.02 + (1 - this.controls.keysTone) * 0.04, this.controls.keysDelay * 0.55);
@@ -360,16 +369,22 @@ export class ChordEngine {
       const lane = (voice + Math.floor(this.step / 2)) % guitars.length;
       const placement = guitars[lane];
       const event = circleEvent(composition, placement.tone, this.step, this.controls.complexity, lane, placement.radius);
-      if (!this.controls.guitar || !event.active || guitarAttacks >= 2) continue;
+      const arpeggiating = this.controls.guitarArp !== 'off';
+      const active = arpeggiating ? this.step % this.controls.guitarArpRate === 0 : event.active;
+      if (!this.controls.guitar || !active || guitarAttacks >= 2) continue;
       guitarAttacks++;
       const phrase = phraseStep(composition, placement.tone, this.step + 3, this.controls.complexity);
       hits.add('guitar');
       this.placementHit(placement.id);
       const base = root + (Math.abs(phrase.degree) % 3) * 2;
-      const degrees = placement.radius > 65 ? [base, base + 2, base + 4] : [base];
+      const degrees = arpeggiating
+        ? [arpeggioDegree(root, this.step, this.controls.guitarArp, this.controls.guitarArpRate, Math.floor(placement.tone.hue / 90) + lane)]
+        : placement.radius > 65 ? [base, base + 2, base + 4] : [base];
       degrees.forEach((degree, index) => {
         const volume = 0.065 * placement.level * this.controls.guitar * event.accent / Math.sqrt(Math.min(guitars.length, 3) * degrees.length);
-        this.voice(noteAt(degree, 24), volume, 0.28 + this.controls.guitarStrum * 0.4,
+        const duration = arpeggiating ? 30 / this.controls.tempo * this.controls.guitarArpRate * 0.75
+          : 0.28 + this.controls.guitarStrum * 0.4;
+        this.voice(noteAt(degree, 24), volume, duration,
           this.controls.guitarTone * 0.55 + placement.tone.saturation * 0.45,
           0.006 + index * 0.014, this.controls.guitarDelay, true);
       });

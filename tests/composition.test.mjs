@@ -5,7 +5,7 @@ import { stripTypeScriptTypes } from 'node:module';
 
 const source = readFileSync(new URL('../src/composition.ts', import.meta.url), 'utf8');
 const compiled = stripTypeScriptTypes(source);
-const { composeImage, phraseStep, scaleNote, melodyEvent, circleEvent } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
+const { composeImage, phraseStep, scaleNote, melodyEvent, circleEvent, arpeggioDegree } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 const tone = (hue, brightness, texture = 0.2, saturation = 0.6) => ({ hue, brightness, texture, saturation });
 const dark = Array.from({ length: 16 }, (_, i) => tone(210 + i, 0.18, 0.1));
 const bright = Array.from({ length: 16 }, (_, i) => tone(30 + i, 0.8, 0.8));
@@ -106,4 +106,13 @@ test('local image contours create distinct melodic movement at the same average 
   const degrees = contour => Array.from({ length: 16 }, (_, step) => phraseStep(composition,
     { ...bright[0], profile: { contour, activity: Array(8).fill(0.5) } }, step, 0.52).degree);
   assert.notDeepEqual(degrees(profile), degrees([...profile].reverse()));
+});
+
+
+test('arpeggiator follows chord-tone direction and selected beat rate', () => {
+  const notes = mode => Array.from({ length: 6 }, (_, step) => arpeggioDegree(0, step, mode, 1));
+  assert.deepEqual(notes('up'), [0, 2, 4, 7, 0, 2]);
+  assert.deepEqual(notes('down'), [7, 4, 2, 0, 7, 4]);
+  assert.deepEqual(notes('upDown'), [0, 2, 4, 7, 4, 2]);
+  assert.deepEqual(Array.from({ length: 8 }, (_, step) => arpeggioDegree(3, step, 'up', 2)), [3, 3, 5, 5, 7, 7, 10, 10]);
 });

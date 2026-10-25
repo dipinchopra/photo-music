@@ -115,3 +115,13 @@ export function circleEvent(composition: Composition, _tone: ImageTone, step: nu
   const size = Math.max(0, Math.min(1, (radius - 28) / 62));
   return melodyEvent(composition, step + offset, Math.min(1, complexity * (0.55 + size * 0.9)));
 }
+
+export type ArpMode = 'off' | 'up' | 'down' | 'upDown';
+
+/** Diatonic chord tones, played on the same eighth-note clock as the ensemble. */
+export function arpeggioDegree(root: number, step: number, mode: ArpMode, rate: number, voice = 0) {
+  const intervals = [0, 2, 4, 7];
+  const index = Math.floor(step / rate) + voice;
+  const pattern = mode === 'down' ? [3, 2, 1, 0] : mode === 'upDown' ? [0, 1, 2, 3, 2, 1] : [0, 1, 2, 3];
+  return root + intervals[pattern[index % pattern.length]];
+}

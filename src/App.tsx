@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { sampleAverageColor } from './color';
-import { composeImage } from './composition';
+import { composeImage, type ArpMode } from './composition';
 import { photoBounds, recordingSize, moveCircle, type Motion } from './scene';
 import { refractPhoto, drawGlassRim } from './glass';
 import { ChordEngine, type Instrument, type Placement } from './music';
@@ -20,6 +20,19 @@ function Slider({ min = 0, max = 100, value, onChange }: {
   return <input type="range" min={min} max={max} value={value}
     style={{ '--range-progress': `${progress}%` } as React.CSSProperties}
     onChange={(event) => onChange(+event.target.value)} />;
+}
+
+function Arpeggiator({ mode, rate, onMode, onRate }: {
+  mode: ArpMode; rate: number; onMode: (mode: ArpMode) => void; onRate: (rate: number) => void;
+}) {
+  return <fieldset className="arpControls"><legend>Arpeggiator</legend>
+    <label><span>Pattern</span><select value={mode} onChange={event => onMode(event.target.value as ArpMode)}>
+      <option value="off">Off · image phrase</option><option value="up">Up</option><option value="down">Down</option><option value="upDown">Up / down</option>
+    </select></label>
+    <label><span>Rate</span><select disabled={mode === 'off'} value={rate} onChange={event => onRate(Number(event.target.value))}>
+      <option value={2}>1/4 · once per beat</option><option value={1}>1/8 · twice per beat</option>
+    </select></label>
+  </fieldset>;
 }
 
 export default function App() {
@@ -64,6 +77,7 @@ export default function App() {
   const [activeCircleId, setActiveCircleId] = useState<number | null>(null);
   const activeCircleRef = useRef<number | null>(null);
   const [fourOnFloor, setFourOnFloor] = useState(false);
+  const [arps, setArps] = useState({ keys: 'off' as ArpMode, guitar: 'off' as ArpMode, keysRate: 2, guitarRate: 2 });
   const [controls, setControls] = useState({
     tempo: 96, pitch: 0, complexity: 52, space: 58,
     keys: 78, keysTone: 62, keysSustain: 55, keysDelay: 0,
@@ -264,10 +278,12 @@ export default function App() {
       keysTone: controls.keysTone / 100,
       keysSustain: controls.keysSustain / 100,
       keysDelay: controls.keysDelay / 100,
+      keysArp: arps.keys, keysArpRate: arps.keysRate,
       guitar: controls.guitar / 100,
       guitarTone: controls.guitarTone / 100,
       guitarStrum: controls.guitarStrum / 100,
       guitarDelay: controls.guitarDelay / 100,
+      guitarArp: arps.guitar, guitarArpRate: arps.guitarRate,
       bass: controls.bass / 100,
       bassDepth: controls.bassDepth / 100,
       bassMovement: controls.bassMovement / 100,
@@ -278,7 +294,7 @@ export default function App() {
       drumDelay: controls.drumDelay / 100,
       fourOnFloor,
     });
-  }, [controls, fourOnFloor]);
+  }, [controls, fourOnFloor, arps]);
 
   useEffect(() => {
     let frame = 0;
@@ -582,16 +598,9 @@ export default function App() {
         <button aria-pressed={mode === 'live'} className={mode === 'live' ? 'selected' : ''} onClick={() => { stopLive(); setMode('live'); }}>Play live</button>
       </div>
       <div className="placementActions">
-        <button disabled={activeCircleId === null} onClick={() => updatePlacements(placementsRef.current.filter(placement => placement.id !== activeCircleRef.current))}>Remove</button>
         <button aria-label="Undo last loop" disabled={!placements.length} onClick={() => updatePlacements(placementsRef.current.slice(0, -1))}>↶ <span>Undo</span></button>
         <button disabled={!placements.length} onClick={() => updatePlacements([])}>Clear</button>
       </div>
-    </section>
-    <section className="photoControls" aria-label="Photo performance">
-      <label><span>Tempo <output>{controls.tempo} BPM</output></span><Slider min={55} max={160} value={controls.tempo} onChange={value => setControl('tempo', value)} /></label>
-      <label><span>Density <output>{controls.complexity}%</output></span><Slider value={controls.complexity} onChange={value => setControl('complexity', value)} /></label>
-      <label><span>{activeCircleId === null ? 'New circle size' : 'Selected circle size'} <output>{Math.round(radius)}px</output></span><Slider min={28} max={90} value={radius} onChange={resizeCircle} /></label>
-      <small>Tap a circle to select it. Drag to explore. Larger circles collect more detail.</small>
     </section>
     <section className="motionControls" aria-label="Circle motion">
       <span>Motion</span>
@@ -603,7 +612,6 @@ export default function App() {
             music.updatePlacements([...placementsRef.current, ...livePlacementsRef.current.values()]);
           }}>{value === 'off' ? 'Off' : value === 'breathe' ? 'Breathe' : 'Sway'}</button>)}
       </div>
-      {motion !== 'off' && <label className="motionAmount"><span>Amount <output>{motionAmount}%</output></span><Slider value={motionAmount} onChange={value => { setMotionAmount(value); motionAmountRef.current = value / 100; }} /></label>}
       <small>{motion === 'sway' ? 'Drift across colors · sound follows' : motion === 'breathe' ? 'Gently expand and settle' : 'Keep circles still'}</small>
     </section>
     <div className={`dockRegion ${sheet ? 'sheetExpanded' : ''}`}>
@@ -630,12 +638,20 @@ export default function App() {
           {([['keys', 'Volume', 'Sets the level of every keyboard circle.'], ['keysTone', 'Tone', 'Moves from soft keys to a brighter synth.'],
             ['keysSustain', 'Note length', 'Controls how long keyboard notes ring.']] as const).map(([key, label, help]) =>
             <label key={key}><span>{label} <output>{controls[key]}%</output></span><small>{help}</small>
-              <Slider value={controls[key]} onChange={(value) => setControl(key, value)} /></label>)}</div>}
+              <Slider value={controls[key]} onChange={(value) => setControl(key, value)} /></label>)}
+          <Arpeggiator mode={arps.keys} rate={arps.keysRate}
+            onMode={value => setArps(current => ({ ...current, keys: value }))}
+            onRate={value => setArps(current => ({ ...current, keysRate: value }))} />
+        </div>}
         {sheet === 'guitar' && <div className="instrumentModule guitarModule"><strong>🎸 Guitar</strong>
           {([['guitar', 'Volume', 'Sets the level of every guitar circle.'], ['guitarTone', 'Tone', 'Moves from mellow plucks to brighter strings.'],
             ['guitarStrum', 'Note length', 'Controls how long guitar notes ring.']] as const).map(([key, label, help]) =>
             <label key={key}><span>{label} <output>{controls[key]}%</output></span><small>{help}</small>
-              <Slider value={controls[key]} onChange={(value) => setControl(key, value)} /></label>)}</div>}
+              <Slider value={controls[key]} onChange={(value) => setControl(key, value)} /></label>)}
+          <Arpeggiator mode={arps.guitar} rate={arps.guitarRate}
+            onMode={value => setArps(current => ({ ...current, guitar: value }))}
+            onRate={value => setArps(current => ({ ...current, guitarRate: value }))} />
+        </div>}
         {sheet === 'bass' && <div className="instrumentModule bassModule"><strong>🎸 Bass</strong>
           {([['bass', 'Volume', 'Sets the level of every bass circle.'], ['bassDepth', 'Depth', 'Pushes bass notes into a lower register.'],
             ['bassMovement', 'Movement', 'Adds beat-aligned bass notes.']] as const).map(([key, label, help]) =>
@@ -651,12 +667,19 @@ export default function App() {
             <span>Four-on-the-floor</span><small>{fourOnFloor ? 'On · kick plays every beat' : 'Off · kick follows the image pattern'}</small>
           </button>
         </div>}
-        {sheet === 'mix' && <div className="instrumentModule globalModule"><strong>Instrument balance</strong>
-          {INSTRUMENTS.map(instrument => <label key={instrument.id}><span>{instrument.label} <output>{controls[instrument.id]}%</output></span>
-            <Slider value={controls[instrument.id]} onChange={value => setControl(instrument.id, value)} /></label>)}
-          <small>Each instrument shares the photo’s harmony and pulse. Delay stays at 0%.</small>
-        </div>}
+        {sheet === 'mix' && <div className="instrumentModule globalModule"><strong>Composition</strong>
+          <label><span>Tempo <output>{controls.tempo} BPM</output></span><small>Sets the speed of the loop.</small>
+            <Slider min={55} max={160} value={controls.tempo} onChange={(value) => setControl('tempo', value)} /></label>
+          <label><span>Pitch <output>{controls.pitch > 0 ? '+' : ''}{controls.pitch} st</output></span><small>Transposes the complete arrangement.</small>
+            <Slider min={-12} max={12} value={controls.pitch} onChange={(value) => setControl('pitch', value)} /></label>
+          <label><span>Variation <output>{controls.complexity}%</output></span><small>Moves from spacious patterns to busier phrases.</small>
+            <Slider value={controls.complexity} onChange={(value) => setControl('complexity', value)} /></label>
+          <label><span>Space <output>{controls.space}%</output></span><small>Adds echo and atmospheric depth.</small>
+            <Slider value={controls.space} onChange={(value) => setControl('space', value)} /></label></div>}
 
+        {sheet === 'mix' && <label className="sizeControl"><span>{activeCircleId === null ? 'Circle size' : 'Selected circle size'} <output>{Math.round(radius)}px</output></span><Slider min={28} max={90} value={radius} onChange={resizeCircle} /><small>Larger circles sample more color and play louder.</small></label>}
+        {sheet === 'mix' && activeCircleId !== null && <button className="removeCircle" onClick={() => updatePlacements(placementsRef.current.filter(placement => placement.id !== activeCircleRef.current))}>Remove selected circle</button>}
+        {sheet === 'mix' && motion !== 'off' && <label className="sizeControl"><span>Motion amount <output>{motionAmount}%</output></span><Slider value={motionAmount} onChange={value => { setMotionAmount(value); motionAmountRef.current = value / 100; }} /></label>}
       </div>
     </section>
     </div>
