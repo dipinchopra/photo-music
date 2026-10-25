@@ -167,12 +167,24 @@ export function drawPlacementMarker(ctx: CanvasRenderingContext2D, bounds: Bound
   ctx.save();
   ctx.scale(dpr, dpr);
   ctx.beginPath(); ctx.rect(bounds.x, bounds.y, bounds.width, bounds.height); ctx.clip();
-  const { x, y } = placement;
+  // Draw the small marker on whole output pixels. Fractional moving positions
+  // otherwise make one arm blur or narrow while the other stays sharp.
+  const transform = ctx.getTransform();
+  const unit = Math.min(Math.hypot(transform.a, transform.b), Math.hypot(transform.c, transform.d));
+  const width = Math.max(1, Math.round(1.75 * unit));
+  const arm = Math.max(2, Math.round(4 * unit));
+  const inset = (arm + width / 2 + unit) / unit;
+  const markerX = Math.max(bounds.x + Math.min(inset, bounds.width / 2), Math.min(bounds.x + bounds.width - inset, placement.x));
+  const markerY = Math.max(bounds.y + Math.min(inset, bounds.height / 2), Math.min(bounds.y + bounds.height - inset, placement.y));
+  const snap = (value: number) => Math.round(value - width / 2) + width / 2;
+  const x = snap(transform.a * markerX + transform.c * markerY + transform.e);
+  const y = snap(transform.b * markerX + transform.d * markerY + transform.f);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.beginPath();
-  ctx.moveTo(x - 4, y); ctx.lineTo(x + 4, y);
-  ctx.moveTo(x, y - 4); ctx.lineTo(x, y + 4);
+  ctx.moveTo(x - arm, y); ctx.lineTo(x + arm, y);
+  ctx.moveTo(x, y - arm); ctx.lineTo(x, y + arm);
   ctx.globalAlpha = 1;
-  ctx.strokeStyle = 'rgba(0,0,0,.4)'; ctx.lineWidth = 3.5; ctx.stroke();
-  ctx.strokeStyle = color; ctx.lineWidth = 1.75; ctx.stroke();
+  ctx.strokeStyle = 'rgba(0,0,0,.4)'; ctx.lineWidth = width + Math.max(2, Math.round(1.75 * unit)); ctx.stroke();
+  ctx.strokeStyle = color; ctx.lineWidth = width; ctx.stroke();
   ctx.restore();
 }

@@ -72,13 +72,16 @@ test('tap-to-remove targets only the selected instrument in every visual mode', 
 test('every visual mode keeps a plus marker without a surrounding outline', () => {
   for (const { id } of VISUAL_MODES) {
     const state = {}, strokes = [], paths = [];
-    const ctx = new Proxy(state, { get: (target, key) => key === 'stroke'
+    const ctx = new Proxy(state, { get: (target, key) => key === 'getTransform' ? () => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }) : key === 'stroke'
       ? () => strokes.push({ color: target.strokeStyle, alpha: target.globalAlpha, width: target.lineWidth })
       : (...args) => paths.push([key, ...args]), set: (target, key, value) => { target[key] = value; return true; } });
     drawPlacementMarker(ctx, { x: 0, y: 0, width: 400, height: 300 }, placement, '#8be9fd');
     assert.ok(strokes.some(s => s.color === '#8be9fd' && s.alpha === 1), id);
     assert.equal(paths.filter(p => p[0] === 'lineTo').length, 2);
     assert.equal(paths.some(p => p[0] === 'arc' || p[0] === 'closePath'), false);
+    const starts = paths.filter(p => p[0] === 'moveTo');
+    const ends = paths.filter(p => p[0] === 'lineTo');
+    assert.equal(ends[0][1] - starts[0][1], ends[1][2] - starts[1][2]);
   }
 });
 
