@@ -1,4 +1,5 @@
 import { composeImage, circleEvent, phraseStep, randomAt, scaleNote, arpeggioDegree, type ArpMode, type Composition } from './composition';
+import { SampleBank, PHOTO_PADS } from './pads';
 
 export type Instrument = 'keys' | 'guitar' | 'bass' | 'drums';
 
@@ -72,6 +73,59 @@ export class ChordEngine {
   private nextStepTime: number | null = null;
   private scheduledTime: number | null = null;
   private hitTimers = new Set<number>();
+  private samples = new SampleBank();
+  private sampleVoices: { source: AudioBufferSourceNode; gain: GainNode }[] = [];
+  get samplesReady() { return this.samples.ready; }
+
+  async prepareSamples(baseUrl: string) {
+    // Create the graph synchronously on the gesture; decoding need not wait
+    // for Safari's possibly pending resume promise.
+    void this.unlock().catch(() => {});
+    if (!this.context) throw new Error('Audio unavailable');
+    await this.samples.load(this.context, baseUrl);
+  }
+
+  async playSample(index: number, placement: Placement, valid: () => boolean = () => true): Promise<boolean> {
+    const buffer = this.samples.get(index);
+    if (!buffer || !PHOTO_PADS[index]) return false;
+    await this.unlock();
+    if (!valid() || !this.running || !this.context || !this.output) return false;
+    const now = this.context.currentTime;
+    // Bound rapid multi-finger playing without clipping existing loop voices.
+    if (this.sampleVoices.length >= 20) {
+      const oldest = this.sampleVoices.shift()!;
+      oldest.gain.gain.setTargetAtTime(0.0001, now, 0.005);
+      oldest.source.stop(now + 0.025);
+    }
+    const source = this.context.createBufferSource();
+    const filter = this.context.createBiquadFilter();
+    const gain = this.context.createGain();
+    source.buffer = buffer;
+    const instrument = PHOTO_PADS[index].instrument;
+    source.playbackRate.value = instrument === 'drums' ? 1 : Math.pow(2, this.controls.transpose / 12);
+    filter.type = 'lowpass';
+    filter.frequency.value = 1800 + placement.tone.brightness * 11000;
+    const volume = this.controls[instrument];
+    gain.gain.value = volume * (0.58 + placement.tone.saturation * 0.18);
+    source.connect(filter); filter.connect(gain); gain.connect(this.output);
+    const voice = { source, gain };
+    this.sampleVoices.push(voice);
+    this.trackSource(source, gain, now, () => {
+      filter.disconnect();
+      this.sampleVoices = this.sampleVoices.filter(item => item !== voice);
+    });
+    source.start(now);
+    return true;
+  }
+
+  stopSamples() {
+    const now = this.context?.currentTime ?? 0;
+    this.sampleVoices.forEach(({ source, gain }) => {
+      gain.gain.setTargetAtTime(0.0001, now, 0.02);
+      try { source.stop(now + 0.1); } catch {}
+    });
+    this.sampleVoices = [];
+  }
 
   private get noteTime() { return this.scheduledTime ?? this.context!.currentTime; }
 
@@ -152,6 +206,7 @@ export class ChordEngine {
     if (!this.context || this.context.state === 'closed') {
       this.activeGains = [];
       this.activeSources = [];
+      this.sampleVoices = [];
       this.timbreBindings.clear();
       const AudioContextClass = window.AudioContext ||
         (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -511,6 +566,7 @@ export class ChordEngine {
   }
 
   stop(release = 0.12) {
+    this.sampleVoices = [];
     this.placements = [];
     this.timbreBindings.clear();
     this.soundingPlacement = null;

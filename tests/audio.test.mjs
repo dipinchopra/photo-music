@@ -4,7 +4,8 @@ import { readFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 const encode = source => `data:text/javascript;base64,${Buffer.from(stripTypeScriptTypes(source)).toString('base64')}`;
 const compositionUrl = encode(readFileSync(new URL('../src/composition.ts', import.meta.url), 'utf8'));
-const musicSource = readFileSync(new URL('../src/music.ts', import.meta.url), 'utf8').replace("'./composition'", JSON.stringify(compositionUrl));
+const padsUrl = encode(readFileSync(new URL('../src/pads.ts', import.meta.url), 'utf8'));
+const musicSource = readFileSync(new URL('../src/music.ts', import.meta.url), 'utf8').replace("'./composition'", JSON.stringify(compositionUrl)).replace("'./pads'", JSON.stringify(padsUrl));
 const { ChordEngine } = await import(encode(musicSource));
 const { composeImage } = await import(compositionUrl);
 
@@ -17,7 +18,7 @@ class Param {
   cancelScheduledValues() {}
 }
 class Node {
-  gain = new Param(); frequency = new Param(); threshold = new Param();
+  gain = new Param(); playbackRate = new Param(); frequency = new Param(); threshold = new Param();
   ratio = new Param(); delayTime = new Param();
   connections = [];
   connect(node) { this.connections.push(node); }
@@ -28,13 +29,14 @@ class Node {
 class Context {
   static instances = [];
   state = 'running'; currentTime = 0; sampleRate = 8000; destination = new Node();
-  oscillators = []; filters = []; gains = []; resumeCalls = 0;
+  bufferSources = []; oscillators = []; filters = []; gains = []; resumeCalls = 0;
   constructor() { Context.instances.push(this); }
   createGain() { const node = new Node(); this.gains.push(node); return node; }
   createDelay() { this.delay = new Node(); return this.delay; }
   createDynamicsCompressor() { return new Node(); }
-  createMediaStreamDestination() { return { ...new Node(), stream: {} }; }
-  createBufferSource() { return new Node(); }
+  createMediaStreamDestination() { this.recordingDestination = { ...new Node(), stream: {} }; return this.recordingDestination; }
+  createBufferSource() { const node = new Node(); this.bufferSources.push(node); return node; }
+  async decodeAudioData(bytes) { return { original: bytes, duration: 1 }; }
   createBiquadFilter() { const filter = new Node(); this.filters.push(filter); return filter; }
   createBuffer(_channels, length) { return { getChannelData: () => new Float32Array(length) }; }
   createOscillator() { const node = new Node(); this.oscillators.push(node); return node; }
@@ -269,4 +271,73 @@ test('a frozen running Safari context is replaced without waiting for close or r
 
 test('drums start with four-on-the-floor enabled', () => {
   assert.equal(new ChordEngine().controls.fourOnFloor, true);
+});
+
+
+test('sample pads preload once, use buffer sources, and route through the recording mix', async () => {
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  globalThis.fetch = async url => { requests.push(String(url)); return { ok: true, arrayBuffer: async () => new ArrayBuffer(48) }; };
+  try {
+    const engine = new ChordEngine();
+    await Promise.all([engine.prepareSamples('https://example.com/photo-music/samples/dusk/'),
+      engine.prepareSamples('https://example.com/photo-music/samples/dusk/')]);
+    assert.equal(requests.length, 16);
+    assert.equal(engine.samplesReady, true);
+    const context = Context.instances.at(-1);
+    const oscillators = context.oscillators.length;
+    assert.equal(await engine.playSample(0, placement), true);
+    const shot = context.bufferSources.find(source => source.buffer?.original);
+    assert.ok(shot);
+    assert.equal(shot.startTime, context.currentTime);
+    assert.equal(context.oscillators.length, oscillators, 'pads trigger rendered samples rather than synth notes');
+    assert.equal(shot.connections[0], context.filters.at(-1));
+    const output = context.filters.at(-1).connections[0].connections[0];
+    assert.ok(output.connections[0].connections.includes(context.recordingDestination), 'samples reach the recording mix');
+    const streams = await engine.recordingStream();
+    assert.ok(streams);
+    engine.stopSamples();
+    assert.ok(shot.stopTime > context.currentTime);
+    await engine.prepareSamples('https://example.com/photo-music/samples/dusk/');
+    assert.equal(requests.length, 16);
+    assert.equal(await engine.playSample(0, placement, () => false), false, 'cancelled gestures never fire late');
+    assert.equal(await engine.playSample(999, placement), false);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('image brightness filters sample pads and drum playback stays unpitched', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(48) });
+  try {
+    const engine = new ChordEngine();
+    await engine.prepareSamples('https://example.com/samples/');
+    engine.configure({ transpose: 12 });
+    const context = Context.instances.at(-1);
+    await engine.playSample(0, { ...placement, tone: { ...cell, brightness: 0.1 } });
+    const dark = context.filters.at(-1).frequency.value;
+    assert.equal(context.bufferSources.at(-1).playbackRate.value, 2);
+    await engine.playSample(12, { ...placement, tone: { ...cell, brightness: 0.9 } });
+    assert.ok(context.filters.at(-1).frequency.value > dark);
+    assert.equal(context.bufferSources.at(-1).playbackRate.value, 1);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+
+test('rapid pad playing is bounded and decoded samples survive audio context replacement', async () => {
+  const originalFetch = globalThis.fetch;
+  let downloads = 0;
+  globalThis.fetch = async () => { downloads++; return { ok: true, arrayBuffer: async () => new ArrayBuffer(48) }; };
+  try {
+    const engine = new ChordEngine();
+    await engine.prepareSamples('https://example.com/samples/');
+    for (let i = 0; i < 25; i++) await engine.playSample(i % 16, placement);
+    const old = Context.instances.at(-1);
+    assert.equal(engine.sampleVoices.length, 20);
+    const first = old.bufferSources.find(source => source.buffer?.original);
+    assert.ok(first.stopTime <= old.currentTime + .025);
+    old.close = async () => { old.state = 'closed'; };
+    await engine.rebuildPlayback([]);
+    assert.equal(await engine.playSample(0, placement), true);
+    assert.equal(downloads, 16, 'a recovered context reuses the decoded kit');
+  } finally { globalThis.fetch = originalFetch; }
 });

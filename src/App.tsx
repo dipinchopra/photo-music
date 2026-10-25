@@ -6,6 +6,8 @@ import { drawVisual, drawPlacementMarker, showsPlacementMarker, findDraggablePla
 import { EditHistory } from './history';
 import { PlaybackRecovery } from './playback';
 import { ChordEngine, type Instrument, type Placement } from './music';
+import { PHOTO_PADS, PAD_KEYS, photoPadAt, photoPadBounds, enterPhotoPad } from './pads';
+import { drawPadHit, drawPadGuides, PAD_EFFECT_SECONDS, type PadHit } from './padVisuals';
 
 const music = new ChordEngine();
 const INSTRUMENTS: Array<{ id: Instrument; label: string; color: string }> = [
@@ -59,7 +61,9 @@ export default function App() {
   const imageRef = useRef<HTMLImageElement | null>(null);
   const toneCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const placementsRef = useRef<Placement[]>([]);
-  const livePlacementsRef = useRef(new Map<number, Placement>());
+  const liveTouchesRef = useRef(new Map<number, number>());
+  const padHitsRef = useRef(new Map<number, PadHit>());
+  const liveEpochRef = useRef(0);
   const beatRef = useRef<number | null>(null);
   const visualHitsRef = useRef(new Map<number, number>());
   const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -93,6 +97,10 @@ export default function App() {
   const [placements, setPlacements] = useState<Placement[]>([]);
   const [selected, setSelected] = useState<Instrument>('keys');
   const [mode, setMode] = useState<'place' | 'live'>('place');
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  const [hasPlayedPad, setHasPlayedPad] = useState(false);
+  const [kitStatus, setKitStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [radius, setRadius] = useState(50);
   const [fourOnFloor, setFourOnFloor] = useState(true);
   const [arps, setArps] = useState({ keys: 'off' as ArpMode, guitar: 'off' as ArpMode, keysRate: 2, guitarRate: 2 });
@@ -241,11 +249,13 @@ export default function App() {
     const frameDue = now - recordingFrameTimeRef.current >= 1000 / 30 - 1;
     if (exportFrame && !frameDue) {
       ctx.drawImage(cropped, dx, dy, dw, dh);
+      if (modeRef.current === 'live') drawPadGuides(ctx,
+        { x: dx / dpr, y: dy / dpr, width: dw / dpr, height: dh / dpr }, dpr);
       return;
     }
     const photo = recordingPhotoRef.current ?? image;
 
-    const drawnPlacements = [...scenePlacements(), ...livePlacementsRef.current.values()];
+    const drawnPlacements = modeRef.current === 'place' ? scenePlacements() : [];
 
     const visualTime = motionRef.current === 'off' ? 0 : motionSecondsRef.current;
     const renderVisuals = (target: CanvasRenderingContext2D, scale: number) => {
@@ -257,6 +267,8 @@ export default function App() {
       if (showsPlacementMarker(visualModeRef.current)) drawnPlacements.forEach(placement => drawPlacementMarker(target,
         { x: dx / dpr, y: dy / dpr, width: dw / dpr, height: dh / dpr }, placement,
         INSTRUMENTS.find(item => item.id === placement.instrument)!.color, scale));
+      padHitsRef.current.forEach(hit => drawPadHit(target, photo,
+        { x: dx / dpr, y: dy / dpr, width: dw / dpr, height: dh / dpr }, hit, now / 1000, scale));
     };
     if (cropped && recordingContext) {
       // Render effects once per video frame, then reuse that exact frame for
@@ -273,6 +285,8 @@ export default function App() {
       ctx.drawImage(image, dx, dy, dw, dh);
       renderVisuals(ctx, dpr);
     }
+    if (modeRef.current === 'live') drawPadGuides(ctx,
+      { x: dx / dpr, y: dy / dpr, width: dw / dpr, height: dh / dpr }, dpr);
   };
 
   const sampleScene = (detailed = true) => {
@@ -280,7 +294,7 @@ export default function App() {
       const tone = sampleToneAt(placement.x, placement.y, placement.radius, detailed);
       return tone ? { ...placement, tone: { ...tone, texture: detailed ? tone.texture : placement.tone.texture } } : placement;
     });
-    music.updatePlacements([...moving, ...livePlacementsRef.current.values()]);
+    if (modeRef.current === 'place') music.updatePlacements(moving);
     return moving;
   };
 
@@ -298,7 +312,7 @@ export default function App() {
   };
 
   const startBeat = () => {
-    if (beatRef.current) return;
+    if (modeRef.current === 'live' || beatRef.current) return;
     beatRef.current = window.setInterval(() => {
       if (!music.needsScheduling) return;
       if (motionRef.current !== 'off' || dragRef.current) {
@@ -346,6 +360,9 @@ export default function App() {
     let previousTime = performance.now();
     const animate = () => {
       const now = performance.now();
+      padHitsRef.current.forEach((hit, index) => {
+        if (now / 1000 - hit.started >= PAD_EFFECT_SECONDS) padHitsRef.current.delete(index);
+      });
       if (!document.hidden) motionSecondsRef.current += Math.min(0.05, (now - previousTime) / 1000);
       previousTime = now;
       if (!document.hidden && now - lastSampleRef.current >= 40 && (motionRef.current !== 'off' || dragRef.current)) {
@@ -427,36 +444,84 @@ export default function App() {
     startBeat();
   };
 
-  const playLiveAt = async (clientX: number, clientY: number, pointerId: number) => {
-    const placement = makePlacementAt(clientX, clientY, -pointerId - 1);
-    if (!placement) return;
-    const previous = livePlacementsRef.current.get(pointerId);
-    // A held touch keeps its instrument when another instrument is selected.
-    if (previous) placement.instrument = previous.instrument;
-    livePlacementsRef.current.set(pointerId, placement);
-    await music.playPlacements([...placementsRef.current, ...livePlacementsRef.current.values()]);
-    if (placementsRef.current.length || livePlacementsRef.current.size) startBeat();
+  const loadLiveKit = async () => {
+    setKitStatus('loading');
+    try {
+      await music.prepareSamples(new URL('./samples/dusk/', document.baseURI).href);
+      setKitStatus('ready');
+    } catch { setKitStatus('error'); }
+  };
+
+  const triggerPad = async (index: number) => {
+    if (!music.samplesReady || modeRef.current !== 'live' || document.hidden) return;
+    const canvas = canvasRef.current, image = imageRef.current;
+    if (!canvas || !image) return;
+    const rect = canvas.getBoundingClientRect();
+    const bounds = photoBounds(rect.width, rect.height, image.naturalWidth, image.naturalHeight);
+    const cell = photoPadBounds(bounds, index);
+    const x = cell.x + cell.width / 2, y = cell.y + cell.height / 2;
+    const tone = sampleToneAt(x, y, Math.min(cell.width, cell.height) / 2, false);
+    if (!tone) return;
+    const epoch = liveEpochRef.current;
+    const requestedAt = performance.now();
+    try {
+      const played = await music.playSample(index, { id: -index - 1, x, y, radius: 40, level: 1,
+        instrument: PHOTO_PADS[index].instrument, tone },
+        () => epoch === liveEpochRef.current && modeRef.current === 'live' && !document.hidden
+          && performance.now() - requestedAt < 250);
+      if (played) {
+        setHasPlayedPad(true);
+        padHitsRef.current.set(index, { pad: index, started: performance.now() / 1000 });
+        setAudioPaused(false);
+      } else if (epoch === liveEpochRef.current) setAudioPaused(true);
+    } catch { if (epoch === liveEpochRef.current) setAudioPaused(true); }
+  };
+
+  const playLiveAt = (clientX: number, clientY: number, pointerId: number) => {
+    if (!music.samplesReady) return;
+    const canvas = canvasRef.current, image = imageRef.current;
+    if (!canvas || !image) return;
+    const rect = canvas.getBoundingClientRect();
+    const bounds = photoBounds(rect.width, rect.height, image.naturalWidth, image.naturalHeight);
+    const index = photoPadAt(bounds, clientX - rect.left, clientY - rect.top);
+    if (enterPhotoPad(liveTouchesRef.current, pointerId, index) && index !== null) void triggerPad(index);
   };
 
   const stopLive = (pointerId?: number) => {
-    if (pointerId === undefined) livePlacementsRef.current.clear();
-    else livePlacementsRef.current.delete(pointerId);
-    const next = [...placementsRef.current, ...livePlacementsRef.current.values()];
-    if (next.length) void music.playPlacements(next);
-    else { stopBeat(); music.stop(); }
+    if (pointerId !== undefined) {
+      liveTouchesRef.current.delete(pointerId);
+      return; // One-shot samples and photo gestures finish after release.
+    }
+    liveEpochRef.current++;
+    liveTouchesRef.current.clear();
+    padHitsRef.current.clear();
+    music.stopSamples();
   };
+
+  useEffect(() => {
+    if (mode !== 'live' || !hasImage || sheet) return;
+    const play = (event: KeyboardEvent) => {
+      if (event.repeat || event.metaKey || event.ctrlKey || event.altKey
+        || (event.target instanceof HTMLElement && event.target.closest('input, select, textarea, [contenteditable=true]'))) return;
+      const index = PAD_KEYS.indexOf(event.key.toLowerCase());
+      if (index < 0) return;
+      event.preventDefault(); void triggerPad(index);
+    };
+    window.addEventListener('keydown', play);
+    return () => window.removeEventListener('keydown', play);
+  }, [mode, hasImage, sheet]);
 
   const resumePlayback = () => recoveryRef.current?.resume();
 
   useEffect(() => {
     const recovery = new PlaybackRecovery({
       visible: () => !document.hidden,
-      hasLoops: () => placementsRef.current.length > 0,
+      hasLoops: () => placementsRef.current.length > 0 || (modeRef.current === 'live' && !!imageRef.current),
       running: () => music.running,
-      play: () => music.playPlacements(placementsRef.current),
+      play: () => modeRef.current === 'place' && placementsRef.current.length ? music.playPlacements(placementsRef.current) : music.unlock(),
       startScheduler: startBeat,
       stopScheduler: stopBeat,
-      pauseAudio: () => { livePlacementsRef.current.clear(); music.stop(); },
+      pauseAudio: () => { stopLive(); music.stop(); },
       setPaused: setAudioPaused,
     });
     recoveryRef.current = recovery;
@@ -470,7 +535,7 @@ export default function App() {
     // leave resume() pending forever. Watch the clock rather than that promise.
     const watchdog = window.setInterval(() => {
       const clock = music.playbackTime;
-      if (document.hidden || !placementsRef.current.length) {
+      if (document.hidden || !imageRef.current || (!placementsRef.current.length && modeRef.current !== 'live')) {
         stalledChecks = 0; rebuilt = false;
       } else if (clock > lastClock) {
         stalledChecks = 0; rebuilt = false;
@@ -480,7 +545,7 @@ export default function App() {
         if (!rebuilt) {
           rebuilt = true;
           stopRecording();
-          void music.rebuildPlayback(placementsRef.current).then(() => recovery.resume()).catch(() => setAudioPaused(true));
+          void music.rebuildPlayback(modeRef.current === 'place' ? placementsRef.current : []).then(() => recovery.resume()).catch(() => setAudioPaused(true));
           startBeat();
         }
       }
@@ -531,7 +596,7 @@ export default function App() {
     });
     motionStartsRef.current.forEach((_, id) => { if (!ids.has(id)) motionStartsRef.current.delete(id); });
     setPlacements(next);
-    if (!next.length) { stopBeat(); music.stop(release); setAudioPaused(false); }
+    if (!next.length || modeRef.current === 'live') { stopBeat(); music.stop(release); setAudioPaused(false); }
     else {
       startBeat();
       void music.playPlacements(next).catch(() => setAudioPaused(true));
@@ -589,7 +654,7 @@ export default function App() {
       </div>
     </header>
     {audioPaused && <div className="recordMessage" role="status"><span>Audio paused</span><button onClick={() => void resumePlayback()}>Resume sound ▶</button></div>}
-    {hasImage && <div className="recordMessage"><span>{imageStyle}</span><span>{controls.tempo} BPM</span></div>}
+    {hasImage && <div className="recordMessage"><span>{mode === 'live' ? 'Dusk · 16 original sample pads' : imageStyle}</span><span>{mode === 'live' ? (kitStatus === 'ready' ? 'Tap or swipe the photo' : kitStatus === 'error' ? 'Kit failed · tap Play live to retry' : 'Loading samples…') : `${controls.tempo} BPM`}</span></div>}
     {recordError && <div className="recordMessage" role="alert">{recordError}</div>}
     {recordingUrl && <div className="recordMessage"><a href={recordingUrl} download={`image-music.${recordingType.includes('mp4') ? 'mp4' : 'webm'}`}>↓ Save recording</a><button onClick={() => { URL.revokeObjectURL(recordingUrl); setRecordingUrl(null); }}>Dismiss</button></div>}
 
@@ -628,7 +693,7 @@ export default function App() {
           }}
           onPointerMove={(e) => {
             if (mode === 'live') {
-              if (e.pointerType === 'mouse' || livePlacementsRef.current.has(e.pointerId)) void playLiveAt(e.clientX, e.clientY, e.pointerId);
+              if (e.currentTarget.hasPointerCapture(e.pointerId)) playLiveAt(e.clientX, e.clientY, e.pointerId);
               return;
             }
             const drag = dragRef.current;
@@ -677,25 +742,25 @@ export default function App() {
             if (drag) updatePlacements(drag.before, 0.12, false);
           }}
           onPointerLeave={(e) => { if (mode === 'live' && e.pointerType === 'mouse') stopLive(e.pointerId); }} />
-        {hasImage && !placements.length && <div className="hint">{mode === 'live'
-          ? 'Touch and play — use multiple fingers'
+        {hasImage && (mode === 'live' ? !hasPlayedPad : !placements.length) && <div className="hint">{mode === 'live'
+          ? (kitStatus === 'loading' ? 'Loading the Dusk sample kit…' : kitStatus === 'error' ? 'Kit could not load — tap Play live to retry' : '16 sample pads · tap, swipe, or use keys 1–4 / Q–R / A–F / Z–V')
           : 'Choose an instrument, set its size, then tap the photo'}</div>}
       </section>
     </div>
     <section className="performanceBar" aria-label="Common controls">
       <div className="modePicker">
-        <button aria-pressed={mode === 'place'} className={mode === 'place' ? 'selected' : ''} onClick={() => { stopLive(); setMode('place'); }}>Place loops</button>
-        <button aria-pressed={mode === 'live'} className={mode === 'live' ? 'selected' : ''} onClick={() => { stopLive(); setMode('live'); }}>Play live</button>
+        <button aria-pressed={mode === 'place'} className={mode === 'place' ? 'selected' : ''} onClick={() => { stopLive(); setSheet(null); setMode('place'); modeRef.current = 'place'; void resumePlayback(); }}>Place loops</button>
+        <button aria-pressed={mode === 'live'} className={mode === 'live' ? 'selected' : ''} onClick={() => { stopLive(); stopBeat(); music.stop(); setSheet(null); setMode('live'); modeRef.current = 'live'; void loadLiveKit(); }}>Play live</button>
       </div>
-      <div className="placementActions">
+      {mode === 'place' && <div className="placementActions">
         <button aria-label="Undo last edit" disabled={!historyState.canUndo} onClick={undoEdit}>↶ <span>Undo</span></button>
         <button aria-label="Redo last edit" disabled={!historyState.canRedo} onClick={redoEdit}>↷ <span>Redo</span></button>
-        <button disabled={!placements.length} onClick={() => { livePlacementsRef.current.clear(); updatePlacements([], 0.9); }}>Clear</button>
-      </div>
+        <button disabled={!placements.length} onClick={() => { stopLive(); updatePlacements([], 0.9); }}>Clear</button>
+      </div>}
     </section>
     <div className={`dockRegion ${sheet ? 'sheetExpanded' : ''}`}>
-    <nav className="instrumentDock" aria-label="Instruments, visuals, motion and mix">
-      {INSTRUMENTS.map((instrument, index) => <button key={instrument.id}
+    <nav className="instrumentDock" aria-label={mode === 'live' ? 'Sample pads and mix' : 'Instruments, visuals, motion and mix'}>
+      {mode === 'place' && INSTRUMENTS.map((instrument, index) => <button key={instrument.id}
         style={{ '--instrument-color': instrument.color } as React.CSSProperties}
         className={selected === instrument.id ? 'active' : ''}
         aria-label={selected === instrument.id ? `Open ${instrument.id} controls` : `Select ${instrument.id}`} title={selected === instrument.id ? 'Tap again for controls' : 'Select instrument'} aria-pressed={selected === instrument.id} aria-controls="instrumentSheet" aria-expanded={sheet === instrument.id}
@@ -706,14 +771,20 @@ export default function App() {
         <span className="instrumentGlyph" aria-hidden="true">{['▥', '≋', '⌁', '⠿'][index]}</span>
         <span>{['Keys', 'Guitar', 'Bass', 'Drums'][index]}</span><i />
       </button>)}
-      <button className={`visualsButton ${sheet === 'visuals' ? 'active' : ''}`} aria-controls="instrumentSheet" aria-expanded={sheet === 'visuals'} onClick={() => openSheet('visuals')}>
+      {mode === 'live' && PHOTO_PADS.map((pad, index) => <button key={pad.file}
+        disabled={kitStatus !== 'ready' || !hasImage} aria-label={`Play ${pad.name}`}
+        style={{ '--instrument-color': INSTRUMENTS.find(item => item.id === pad.instrument)!.color } as React.CSSProperties}
+        onClick={() => void triggerPad(index)}>
+        <span className="instrumentGlyph" aria-hidden="true">{PAD_KEYS[index].toUpperCase()}</span><span>{pad.name}</span>
+      </button>)}
+      {mode === 'place' && <button className={`visualsButton ${sheet === 'visuals' ? 'active' : ''}`} aria-controls="instrumentSheet" aria-expanded={sheet === 'visuals'} onClick={() => openSheet('visuals')}>
         <span className="instrumentGlyph" aria-hidden="true">◈</span><span>Visuals</span>
-      </button>
-      <button className={`motionButton ${sheet === 'motion' ? 'active' : ''}`} aria-label={`Motion controls, ${motion}`}
+      </button>}
+      {mode === 'place' && <button className={`motionButton ${sheet === 'motion' ? 'active' : ''}`} aria-label={`Motion controls, ${motion}`}
         aria-controls="instrumentSheet" aria-expanded={sheet === 'motion'} onClick={() => openSheet('motion')}>
         <span className="instrumentGlyph" aria-hidden="true">∿</span><span>Motion</span>{motion !== 'off' && <i />}
-      </button>
-      <button className={`mixButton ${sheet === 'mix' ? 'active' : ''}`} aria-controls="instrumentSheet" aria-expanded={sheet === 'mix'} onClick={() => openSheet('mix')}><span className="instrumentGlyph" aria-hidden="true">☷</span><span>Mix</span><small>{controls.tempo}</small></button>
+      </button>}
+      <button className={`mixButton ${sheet === 'mix' ? 'active' : ''}`} aria-controls="instrumentSheet" aria-expanded={sheet === 'mix'} onClick={() => openSheet('mix')}><span className="instrumentGlyph" aria-hidden="true">☷</span><span>Mix</span><small>{mode === 'place' ? controls.tempo : 'Dusk'}</small></button>
     </nav>
     <section id="instrumentSheet" className={`controlSheet ${sheet ? 'isOpen' : ''}`} inert={!sheet} aria-hidden={!sheet}
       aria-labelledby="sheetTitle">
@@ -778,7 +849,7 @@ export default function App() {
             <span>Four-on-the-floor</span><small>{fourOnFloor ? 'On · kick plays every beat' : 'Off · kick follows the image pattern'}</small>
           </button>
         </div>}
-        {sheet === 'mix' && <div className="instrumentModule globalModule"><strong>Composition</strong>
+        {sheet === 'mix' && mode === 'place' && <div className="instrumentModule globalModule"><strong>Composition</strong>
           <label><span>Tempo <output>{controls.tempo} BPM</output></span><small>Sets the speed of the loop.</small>
             <Slider min={55} max={160} value={controls.tempo} onChange={(value) => setControl('tempo', value)} /></label>
           <label><span>Pitch <output>{controls.pitch > 0 ? '+' : ''}{controls.pitch} st</output></span><small>Transposes the complete arrangement.</small>
@@ -788,7 +859,11 @@ export default function App() {
           <label><span>Space <output>{controls.space}%</output></span><small>Adds echo and atmospheric depth.</small>
             <Slider value={controls.space} onChange={(value) => setControl('space', value)} /></label></div>}
 
-        {sheet === 'mix' && <label className="sizeControl"><span>Circle size <output>{Math.round(radius)}px</output></span><Slider min={28} max={90} value={radius} onChange={setRadius} /><small>Tap again with the same instrument to remove. Choose another instrument to layer. Drag to move.</small></label>}
+        {sheet === 'mix' && mode === 'live' && <div className="liveMixControls">
+          {([['keys', 'Chords'], ['guitar', 'Textures'], ['bass', 'Bass'], ['drums', 'Drums']] as const).map(([key, label]) => <label key={key}><span>{label} <output>{controls[key]}%</output></span><Slider value={controls[key]} onChange={value => setControl(key, value)} /></label>)}
+          <label><span>Pitch <output>{controls.pitch > 0 ? '+' : ''}{controls.pitch} st</output></span><Slider min={-12} max={12} value={controls.pitch} onChange={value => setControl('pitch', value)} /></label>
+        </div>}
+        {sheet === 'mix' && mode === 'place' && <label className="sizeControl"><span>Circle size <output>{Math.round(radius)}px</output></span><Slider min={28} max={90} value={radius} onChange={setRadius} /><small>Tap again with the same instrument to remove. Choose another instrument to layer. Drag to move.</small></label>}
       </div>
     </section>
     </div>
