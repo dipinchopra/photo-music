@@ -1,3 +1,5 @@
+import { composeImage, phraseStep, randomAt, scaleNote, type Composition } from './composition';
+
 export type Instrument = 'keys' | 'guitar' | 'bass' | 'drums';
 
 export type ImageTone = {
@@ -41,9 +43,6 @@ type MusicControls = {
 };
 
 const C2 = 65.406391;
-const PENTATONIC = [0, 2, 4, 7, 9];
-const KEYS = [0, 2, 5, 7, 9];
-const PROGRESSIONS = [[0, 7, 9, 5], [0, 9, 5, 7], [9, 5, 0, 7]];
 
 function hz(semitones: number) {
   return C2 * Math.pow(2, semitones / 12);
@@ -59,6 +58,7 @@ export class ChordEngine {
   private activeGains: GainNode[] = [];
   private activeOscillators: OscillatorNode[] = [];
   private step = 0;
+  private composition: Composition = composeImage([]);
   private variation = 0.5;
   private controls: MusicControls = {
     transpose: 0, complexity: 0.5, space: 0.55,
@@ -68,9 +68,10 @@ export class ChordEngine {
     drums: 0.6, drumPunch: 0.7, drumDensity: 0.5, drumDelay: 0.08, fourOnFloor: false,
   };
 
-  setVariation(seed: number) {
-    this.variation = seed;
-    this.step = Math.floor(seed * 16);
+  setComposition(composition: Composition) {
+    this.composition = composition;
+    this.variation = randomAt(composition.seed, 3);
+    this.step = 0;
     this.updateSpace();
   }
 
@@ -217,78 +218,72 @@ export class ChordEngine {
   pulse(): Instrument[] {
     if (!this.placements.length) return [];
     const hits = new Set<Instrument>();
-    const key = KEYS[Math.floor(this.variation * KEYS.length) % KEYS.length] + this.controls.transpose;
-    const progression = PROGRESSIONS[Math.floor(this.variation * PROGRESSIONS.length) % PROGRESSIONS.length];
-    const root = progression[Math.floor(this.step / 8) % progression.length];
+    const composition = this.composition;
+    const bar = Math.floor(this.step / 8);
+    const root = composition.progression[bar % composition.progression.length];
     const beat = this.step % 8;
+    const noteAt = (degree: number, register: number) =>
+      hz(scaleNote(composition, degree) + this.controls.transpose + register);
+    const groups = (instrument: Instrument) => this.placements.filter(p => p.instrument === instrument);
+    const keys = groups('keys'), guitars = groups('guitar'), bass = groups('bass'), drums = groups('drums');
 
-    const keys = this.placements.filter((p) => p.instrument === 'keys');
-    const guitars = this.placements.filter((p) => p.instrument === 'guitar');
-    const bass = this.placements.filter((p) => p.instrument === 'bass');
-    const drums = this.placements.filter((p) => p.instrument === 'drums');
-
-    // A slow pad supplies the harmonic bed that makes the image notes feel
-    // like a melody rather than isolated pitches.
-    if (keys.length && beat === 0) {
+    // Diatonic chords follow the image's mode; inversions keep the pad compact.
+    if (keys.length && beat === 0 && this.controls.keys > 0) {
       hits.add('keys');
-      const third = root === 9 ? 3 : 4;
-      [0, third, 7].forEach((interval, index) => {
-        this.tone(hz(key + root + interval + 24),
-          (0.025 - index * 0.003) * this.controls.keys,
-          2.1 + this.controls.keysSustain * 1.4 + this.controls.space * 0.7,
-          'sine', 850 + this.controls.keysTone * 750, 0.16, this.controls.keysDelay);
+      [root, root + 2, root + 4].forEach((degree, index) => {
+        this.tone(noteAt(degree >= 7 ? degree - 7 : degree, 24),
+          (0.022 - index * 0.003) * this.controls.keys,
+          1.4 + this.controls.keysSustain * 1.6,
+          'sine', 650 + this.controls.keysTone * 900, 0.12, this.controls.keysDelay);
       });
     }
 
-    keys.forEach((placement, index) => {
-      const degree = Math.min(4, Math.floor(placement.tone.hue / 72));
-      const register = placement.tone.brightness > 0.66 ? 36 : placement.tone.brightness < 0.3 ? 24 : 31;
-      const rest = this.controls.complexity < 0.35 && (this.step + index) % 2 === 1;
-      if (!rest) {
-        hits.add('keys');
-        const note = key + PENTATONIC[degree] + register;
-        const volume = 0.085 * placement.level * this.controls.keys / Math.sqrt(Math.max(1, keys.length));
-        this.tone(hz(note), volume, 0.28 + this.controls.keysSustain * 0.72 + this.controls.space * 0.18,
-          this.controls.keysTone > 0.72 ? 'sawtooth' : 'triangle',
-          700 + this.controls.keysTone * 2600 + placement.tone.brightness * 900,
-          0.012 + (1 - this.controls.keysTone) * 0.035, this.controls.keysDelay);
-      }
+    keys.forEach(placement => {
+      const phrase = phraseStep(composition, placement.tone, this.step, this.controls.complexity);
+      if (!phrase.active || !this.controls.keys) return;
+      hits.add('keys');
+      // Land on chord tones at strong beats, wander through the mode between them.
+      const degree = beat % 4 === 0 ? root + [0, 2, 4][Math.abs(phrase.degree) % 3] : phrase.degree;
+      const register = placement.tone.brightness > 0.68 ? 36 : 24;
+      const volume = 0.085 * placement.level * this.controls.keys * phrase.accent / Math.sqrt(keys.length);
+      this.tone(noteAt(degree, register), volume,
+        0.16 + this.controls.keysSustain * 0.6 + (beat % 4 === 0 ? 0.24 : 0),
+        this.controls.keysTone > 0.72 ? 'sawtooth' : 'triangle',
+        600 + this.controls.keysTone * 2400 + placement.tone.saturation * 1300,
+        0.012 + (1 - this.controls.keysTone) * 0.035, this.controls.keysDelay);
     });
 
-    const guitarInterval = this.controls.guitarStrum > 0.72 ? 1 : this.controls.guitarStrum > 0.3 ? 2 : 4;
-    if (beat % guitarInterval === 0) {
-      guitars.forEach((placement, index) => {
-        hits.add('guitar');
-        const degree = Math.min(4, Math.floor(placement.tone.hue / 72));
-        const baseNote = key + PENTATONIC[degree] + 24;
-        const intervals = this.controls.guitarStrum > 0.58 ? [0, 7, 12] : [0];
-        intervals.forEach((interval, chordIndex) => {
-          const volume = 0.065 * placement.level * this.controls.guitar /
-            Math.sqrt(Math.max(1, guitars.length * intervals.length));
-          this.tone(hz(baseNote + interval), volume, 0.24 + this.controls.guitarStrum * 0.38,
-            this.controls.guitarTone > 0.66 ? 'sawtooth' : 'triangle',
-            900 + this.controls.guitarTone * 2900 + placement.tone.brightness * 700,
-            0.006 + chordIndex * 0.012 + index * 0.004, this.controls.guitarDelay);
-        });
+    guitars.forEach(placement => {
+      const phrase = phraseStep(composition, placement.tone, this.step + 3, this.controls.complexity);
+      const offbeat = (beat + Math.floor(placement.tone.hue / 60)) % 2 === 1;
+      if (!this.controls.guitar || !(beat === 0 || (phrase.active && (offbeat || this.controls.guitarStrum > 0.72)))) return;
+      hits.add('guitar');
+      const degrees = this.controls.guitarStrum > 0.58 ? [root, root + 2, root + 4] : [root + (Math.abs(phrase.degree) % 3) * 2];
+      degrees.forEach((degree, index) => {
+        const volume = 0.065 * placement.level * this.controls.guitar * phrase.accent / Math.sqrt(guitars.length * degrees.length);
+        this.tone(noteAt(degree, 24), volume, 0.18 + this.controls.guitarStrum * 0.4,
+          this.controls.guitarTone > 0.66 ? 'sawtooth' : 'triangle',
+          800 + this.controls.guitarTone * 2300 + placement.tone.saturation * 1200,
+          0.006 + index * 0.014, this.controls.guitarDelay);
       });
-    }
+    });
 
-    const bassInterval = this.controls.bassMovement > 0.7 ? 1 : this.controls.bassMovement > 0.32 ? 2 : 4;
-    if (beat % bassInterval === 0) {
-      if (bass.length) hits.add('bass');
-      bass.forEach((placement) => {
-        const colorOffset = PENTATONIC[Math.min(4, Math.floor(placement.tone.hue / 72))];
-        const bassRegister = this.controls.bassDepth > 0.66 ? 0 : this.controls.bassDepth > 0.32 ? 7 : 12;
-        const melodicOffset = this.controls.bassMovement > 0.58 ? colorOffset % 5 : 0;
-        const note = key + root + melodicOffset + bassRegister;
-        this.tone(hz(note), 0.12 * placement.level * this.controls.bass / Math.sqrt(Math.max(1, bass.length)),
-          0.58, 'sine', 650 + placement.tone.texture * 350, 0.012, this.controls.bassDelay);
-      });
-    }
+    bass.forEach(placement => {
+      const phrase = phraseStep(composition, placement.tone, this.step, this.controls.bassMovement);
+      if (!this.controls.bass || !(beat === 0 || beat === 4 || (phrase.active && this.controls.bassMovement > 0.58))) return;
+      hits.add('bass');
+      const nextRoot = composition.progression[(bar + 1) % composition.progression.length];
+      const degree = beat === 7 && this.controls.bassMovement > 0.58 ? nextRoot - 1
+        : root + (beat === 4 && this.controls.bassMovement > 0.32 ? 4 : 0);
+      const register = this.controls.bassDepth > 0.66 ? 0 : 12;
+      this.tone(noteAt(degree, register), 0.12 * placement.level * this.controls.bass * phrase.accent / Math.sqrt(bass.length),
+        beat % 4 === 0 ? 0.62 : 0.3, 'sine', 500 + placement.tone.texture * 550, 0.012, this.controls.bassDelay);
+    });
 
     drums.forEach((placement) => {
-      const variation = Math.floor(placement.tone.hue / 120) % 3;
-      const volume = placement.level * this.controls.drums;
+      const variation = Math.floor(randomAt(composition.seed, Math.floor(placement.tone.hue) + 70) * 3);
+      const fill = bar % 4 === 3 && beat >= 6 && this.controls.complexity > 0.45;
+      const volume = placement.level * this.controls.drums / Math.sqrt(Math.max(1, drums.length));
       const brightness = placement.tone.brightness;
 
       if (brightness < 0.34) {
@@ -303,7 +298,7 @@ export class ChordEngine {
       } else if (brightness < 0.68) {
         const snarePatterns = [[2, 6], [2, 6, 7], [2, 5, 6]];
         const pattern = this.controls.complexity < 0.35 ? [2, 6] : snarePatterns[variation];
-        if (pattern.includes(beat)) {
+        if (pattern.includes(beat) || (fill && composition.energy > 0.45)) {
           hits.add('drums');
           this.snare((0.05 + this.controls.drumPunch * 0.075) * volume,
             placement.tone.saturation, this.controls.drumDelay);
@@ -312,11 +307,11 @@ export class ChordEngine {
         const sparse = [1, 3, 5, 7];
         const dense = variation === 0 ? [0, 1, 2, 3, 4, 5, 6, 7]
           : variation === 1 ? [0, 1, 3, 4, 5, 7] : [1, 2, 3, 5, 6, 7];
-        const pattern = placement.tone.texture * 0.45 + this.controls.drumDensity * 0.75 > 0.58 ? dense : sparse;
+        const pattern = placement.tone.texture * 0.35 + this.controls.drumDensity * 0.45 + composition.energy * 0.35 > 0.58 ? dense : sparse;
         if (pattern.includes(beat)) {
           hits.add('drums');
           const open = placement.tone.texture > 0.62 && beat === 7;
-          this.noise((open ? 0.036 : 0.026) * volume, true, open, this.controls.drumDelay);
+          this.noise((open ? 0.036 : beat % 2 === 0 ? 0.026 : 0.017) * volume, true, open, this.controls.drumDelay);
         }
       }
     });

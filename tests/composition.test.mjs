@@ -1,0 +1,44 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { stripTypeScriptTypes } from 'node:module';
+
+const source = readFileSync(new URL('../src/composition.ts', import.meta.url), 'utf8');
+const compiled = stripTypeScriptTypes(source);
+const { composeImage, phraseStep, scaleNote } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
+const tone = (hue, brightness, texture = 0.2, saturation = 0.6) => ({ hue, brightness, texture, saturation });
+const dark = Array.from({ length: 16 }, (_, i) => tone(210 + i, 0.18, 0.1));
+const bright = Array.from({ length: 16 }, (_, i) => tone(30 + i, 0.8, 0.8));
+const phrase = (image, cell) => Array.from({ length: 32 }, (_, step) => phraseStep(composeImage(image), cell, step, 0.52));
+
+test('the same image reproduces its composition and phrases', () => {
+  assert.deepEqual(composeImage(dark), composeImage(structuredClone(dark)));
+  assert.deepEqual(phrase(dark, dark[0]), phrase(structuredClone(dark), dark[0]));
+});
+test('contrasting images change mode, energy, and musical phrase', () => {
+  assert.notDeepEqual(composeImage(dark).scale, composeImage(bright).scale);
+  assert.ok(composeImage(bright).energy > composeImage(dark).energy);
+  assert.notDeepEqual(phrase(dark, dark[0]), phrase(bright, bright[0]));
+});
+test('spatial arrangement matters even with the same average color', () => {
+  const reversed = [...dark].reverse();
+  assert.notEqual(composeImage(dark).seed, composeImage(reversed).seed);
+  assert.notDeepEqual(phrase(dark, dark[0]), phrase(reversed, dark[0]));
+});
+test('phrases include movement, rests, accents, and a four-bar response', () => {
+  const notes = phrase(bright, bright[0]);
+  assert.ok(new Set(notes.filter(n => n.active).map(n => n.degree)).size >= 3);
+  assert.ok(notes.some(n => !n.active));
+  assert.ok(new Set(notes.map(n => n.accent)).size > 1);
+  assert.notDeepEqual(notes.slice(0, 16), notes.slice(16));
+});
+test('notes stay in the selected mode across negative degrees and octaves', () => {
+  for (const image of [dark, bright]) {
+    const composition = composeImage(image);
+    for (let degree = -14; degree <= 28; degree++) {
+      const pitchClass = ((scaleNote(composition, degree) - composition.tonic) % 12 + 12) % 12;
+      assert.ok(composition.scale.includes(pitchClass));
+      assert.equal(scaleNote(composition, degree + 7) - scaleNote(composition, degree), 12);
+    }
+  }
+});

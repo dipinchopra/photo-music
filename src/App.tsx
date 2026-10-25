@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { sampleAverageColor } from './color';
+import { composeImage } from './composition';
 import { refractPhoto, drawGlassRim } from './glass';
 import { ChordEngine, type Instrument, type Placement } from './music';
 
@@ -402,7 +403,19 @@ export default function App() {
     const image = new Image();
     image.onload = () => {
       imageRef.current = image;
-      music.setVariation(crypto.getRandomValues(new Uint32Array(1))[0] / 0xffffffff);
+      // Analyze a fixed-size copy, independent of display size and device pixel ratio.
+      const analysis = document.createElement('canvas');
+      analysis.width = 64; analysis.height = 64;
+      const context = analysis.getContext('2d', { willReadFrequently: true });
+      if (context) {
+        context.drawImage(image, 0, 0, 64, 64);
+        const cells = [];
+        for (let y = 8; y < 64; y += 16) for (let x = 8; x < 64; x += 16) {
+          const cell = sampleAverageColor(context, x, y, 8);
+          cells.push({ hue: cell.h, saturation: cell.s, brightness: cell.l, texture: cell.texture });
+        }
+        music.setComposition(composeImage(cells));
+      }
       stopLive();
       updatePlacements([]);
       setHasImage(true);
