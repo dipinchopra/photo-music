@@ -1,4 +1,4 @@
-import { composeImage, phraseStep, randomAt, scaleNote, type Composition } from './composition';
+import { composeImage, melodyEvent, phraseStep, randomAt, scaleNote, type Composition } from './composition';
 
 export type Instrument = 'keys' | 'guitar' | 'bass' | 'drums';
 
@@ -20,6 +20,7 @@ export type Placement = {
 };
 
 type MusicControls = {
+  tempo: number;
   transpose: number;
   complexity: number;
   space: number;
@@ -58,6 +59,8 @@ export class ChordEngine {
   private activeGains: GainNode[] = [];
   private activeOscillators: OscillatorNode[] = [];
   private step = 0;
+  private lastKeyNote: number | null = null;
+  private lastKeyStep = -100;
   private composition: Composition = composeImage([]);
   private variation = 0.5;
   onPlaybackState: ((running: boolean) => void) | null = null;
@@ -68,7 +71,7 @@ export class ChordEngine {
     return (30000 / tempo) * (1 + (this.step % 2 === 1 ? 1 : -1) * this.composition.swing);
   }
   private controls: MusicControls = {
-    transpose: 0, complexity: 0.5, space: 0.55,
+    tempo: 96, transpose: 0, complexity: 0.5, space: 0.55,
     keys: 0.78, keysTone: 0.62, keysSustain: 0.55, keysDelay: 0.42,
     guitar: 0.7, guitarTone: 0.58, guitarStrum: 0.5, guitarDelay: 0.38,
     bass: 0.68, bassDepth: 0.7, bassMovement: 0.45, bassDelay: 0.12,
@@ -79,6 +82,8 @@ export class ChordEngine {
     this.composition = composition;
     this.variation = randomAt(composition.seed, 3);
     this.step = 0;
+    this.lastKeyNote = null;
+    this.lastKeyStep = -100;
     this.updateSpace();
   }
 
@@ -187,11 +192,11 @@ export class ChordEngine {
       this.tone(frequency * 0.998, volume * 0.55, duration * 2.4, 'triangle', 500 + tone * 1000, 0.14, send);
       this.tone(frequency * 1.002, volume * 0.45, duration * 2.1, 'sine', 1600, 0.19, send);
     } else if (style === 'pulse') {
-      this.tone(frequency, volume * 0.75, duration * 0.45, tone > 0.6 ? 'sawtooth' : 'square',
+      this.tone(frequency, volume * 0.75, duration * 0.85, tone > 0.6 ? 'sawtooth' : 'square',
         450 + tone * 3200, 0.004, send * 0.3);
       this.tone(frequency / 2, volume * 0.25, duration * 0.6, 'sine', 600, 0.006, 0);
     } else {
-      this.tone(frequency, volume * 0.8, duration * 0.65, guitar ? 'sawtooth' : 'triangle',
+      this.tone(frequency, volume * 0.8, duration, guitar ? 'sawtooth' : 'triangle',
         950 + tone * 3800, Math.min(attack, 0.008), send * 0.6);
       this.tone(frequency * 2, volume * 0.2, 0.08, 'sine', 7000, 0.002, 0);
     }
@@ -264,34 +269,40 @@ export class ChordEngine {
     const keys = groups('keys'), guitars = groups('guitar'), bass = groups('bass'), drums = groups('drums');
 
     // Diatonic chords follow the image's mode; inversions keep the pad compact.
-    if (keys.length && beat === 0 && this.controls.keys > 0 && (composition.style === 'ambient' || bar % 2 === 0)) {
+    if (keys.length && beat === 0 && this.controls.keys > 0 && composition.style === 'ambient' && bar % 2 === 0) {
       hits.add('keys');
       [root, root + 2, root + 4].forEach((degree, index) => {
         this.tone(noteAt(degree >= 7 ? degree - 7 : degree, 24),
-          (composition.style === 'ambient' ? 0.025 : 0.008) * this.controls.keys / (1 + index * 0.2),
-          1.4 + this.controls.keysSustain * 1.6,
-          'sine', 650 + this.controls.keysTone * 900, 0.12, this.controls.keysDelay);
+          0.012 * this.controls.keys / (1 + index * 0.2),
+          3.5 + this.controls.keysSustain * 2.5,
+          'sine', 650 + this.controls.keysTone * 900, 0.45, this.controls.keysDelay);
       });
     }
 
-    keys.forEach(placement => {
+    const melody = melodyEvent(composition, this.step, this.controls.complexity);
+    if (keys.length && melody.active && this.controls.keys > 0 && this.step - this.lastKeyStep >= 3) {
+      // Circles take turns as one melodic voice instead of stacking attacks.
+      const placement = keys[melody.voice % keys.length];
       const phrase = phraseStep(composition, placement.tone, this.step, this.controls.complexity);
-      if (!phrase.active || !this.controls.keys) return;
-      hits.add('keys');
-      // Land on chord tones at strong beats, wander through the mode between them.
       const degree = beat % 4 === 0 ? root + [0, 2, 4][Math.abs(phrase.degree) % 3] : phrase.degree;
       const register = placement.tone.brightness > 0.68 ? 36 : 24;
-      const volume = 0.085 * placement.level * this.controls.keys * phrase.accent / Math.sqrt(keys.length);
-      this.voice(noteAt(degree, register), volume,
-        0.16 + this.controls.keysSustain * 0.6 + (beat % 4 === 0 ? 0.24 : 0),
-        this.controls.keysTone * 0.55 + placement.tone.saturation * 0.45,
-        0.012 + (1 - this.controls.keysTone) * 0.035, this.controls.keysDelay);
-    });
+      const pitch = scaleNote(composition, degree) + this.controls.transpose + register;
+      // Let a repeated pitch ring rather than striking it again immediately.
+      if (pitch !== this.lastKeyNote || this.step - this.lastKeyStep >= 8) {
+        hits.add('keys');
+        this.lastKeyNote = pitch;
+        this.lastKeyStep = this.step;
+        const secondsPerStep = 60 / this.controls.tempo / 2;
+        const duration = Math.max(0.6, melody.hold * secondsPerStep * (0.8 + this.controls.keysSustain * 0.5));
+        this.voice(hz(pitch), 0.07 * placement.level * this.controls.keys * melody.accent,
+          duration, this.controls.keysTone * 0.55 + placement.tone.saturation * 0.45,
+          0.025 + (1 - this.controls.keysTone) * 0.055, this.controls.keysDelay * 0.45);
+      }
+    }
 
-    guitars.forEach(placement => {
+    guitars.forEach((placement, index) => {
       const phrase = phraseStep(composition, placement.tone, this.step + 3, this.controls.complexity);
-      const offbeat = (beat + Math.floor(placement.tone.hue / 60)) % 2 === 1;
-      if (!this.controls.guitar || !(beat === 0 || (phrase.active && (offbeat || this.controls.guitarStrum > 0.72)))) return;
+      if (!this.controls.guitar || !melodyEvent(composition, this.step, this.controls.guitarStrum).active || index !== melody.voice % guitars.length) return;
       hits.add('guitar');
       const degrees = this.controls.guitarStrum > 0.58 ? [root, root + 2, root + 4] : [root + (Math.abs(phrase.degree) % 3) * 2];
       degrees.forEach((degree, index) => {
@@ -358,6 +369,8 @@ export class ChordEngine {
 
   stop(release = 0.12) {
     this.placements = [];
+    this.lastKeyNote = null;
+    this.lastKeyStep = -100;
     if (!this.context) return;
     const now = this.context.currentTime;
     this.activeGains.forEach((gain) => {

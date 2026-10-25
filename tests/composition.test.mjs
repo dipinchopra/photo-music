@@ -5,7 +5,7 @@ import { stripTypeScriptTypes } from 'node:module';
 
 const source = readFileSync(new URL('../src/composition.ts', import.meta.url), 'utf8');
 const compiled = stripTypeScriptTypes(source);
-const { composeImage, phraseStep, scaleNote } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
+const { composeImage, phraseStep, scaleNote, melodyEvent } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 const tone = (hue, brightness, texture = 0.2, saturation = 0.6) => ({ hue, brightness, texture, saturation });
 const dark = Array.from({ length: 16 }, (_, i) => tone(210 + i, 0.18, 0.1));
 const bright = Array.from({ length: 16 }, (_, i) => tone(30 + i, 0.8, 0.8));
@@ -54,4 +54,20 @@ test('contrasting photo features select four audible palettes and different temp
   assert.equal(new Set(photos.map(p => p.tempo)).size, 4);
   assert.ok(photos[3].tempo - photos[0].tempo > 50);
   assert.ok(photos[2].swing > photos[0].swing);
+});
+
+
+test('lead phrases guarantee breathing space across images and variation levels', () => {
+  for (const style of ['ambient', 'glass', 'plucked', 'pulse']) {
+    for (let seed = 1; seed <= 50; seed++) {
+      for (const complexity of [0, 0.52, 1]) {
+        const composition = { ...composeImage(bright), style, seed };
+        const onsets = Array.from({ length: 128 }, (_, step) => step)
+          .filter(step => melodyEvent(composition, step, complexity).active);
+        assert.ok(onsets.length <= 24);
+        for (let i = 1; i < onsets.length; i++) assert.ok(onsets[i] - onsets[i - 1] >= 3);
+        assert.ok(onsets.every(step => step % 32 <= 26));
+      }
+    }
+  }
 });

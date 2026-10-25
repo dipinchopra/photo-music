@@ -50,7 +50,7 @@ test('screen-lock interruption resumes the existing audio context and retained l
   await engine.unlock();
   assert.equal(context.resumeCalls, 1);
   assert.equal(engine.running, true);
-  const hits = Array.from({ length: 8 }, () => engine.pulse()).flat();
+  const hits = Array.from({ length: 32 }, () => engine.pulse()).flat();
   assert.ok(hits.includes('keys'));
   assert.ok(context.oscillators.length > count);
 });
@@ -90,4 +90,28 @@ test('image palettes produce different oscillator spectra and groove timing', as
     }
   }
   assert.equal(new Set(signatures).size, 4);
+});
+
+
+test('many keyboard circles take turns instead of multiplying attacks', async () => {
+  const attacks = [];
+  for (const count of [1, 8]) {
+    const engine = new ChordEngine();
+    engine.setComposition({ ...composeImage([cell]), style: 'plucked' });
+    const notes = Array.from({ length: count }, (_, i) => ({ ...placement, id: i + 1, tone: { ...cell, hue: 30 + i * 40 } }));
+    await engine.playPlacements(notes);
+    const context = Context.instances.at(-1);
+    let previous = context.oscillators.length;
+    const steps = [0];
+    for (let step = 1; step < 32; step++) {
+      engine.pulse();
+      if (context.oscillators.length > previous) steps.push(step);
+      previous = context.oscillators.length;
+    }
+    assert.ok(steps.length <= 6, `too many attacks: ${steps}`);
+    for (let i = 1; i < steps.length; i++) assert.ok(steps[i] - steps[i - 1] >= 3);
+    assert.ok(steps.at(-1) <= 26, 'leave the end of the phrase quiet');
+    attacks.push(context.oscillators.length);
+  }
+  assert.ok(attacks[1] <= 12, 'adding circles must not create stacked keyboard voices');
 });

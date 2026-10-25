@@ -71,3 +71,30 @@ export function phraseStep(composition: Composition, tone: ImageTone, step: numb
   const degree = start + motion * (tone.saturation > 0.55 ? 2 : 1) + response;
   return { active, degree, accent: beat % 2 === 0 ? 1 : 0.65 + randomAt(seed, slot + 40) * 0.2 };
 }
+
+// A shared lead phrase prevents every circle from hammering its own rhythm.
+// Each four-bar phrase ends with space; higher variation adds passing notes.
+export function melodyEvent(composition: Composition, step: number, complexity: number) {
+  const phrase = Math.floor(step / 32);
+  const slot = step % 32;
+  const patterns = [
+    [0, 6, 12, 19, 24],
+    [0, 4, 11, 18, 25],
+    [0, 7, 14, 20, 25],
+    [0, 5, 12, 21, 26],
+  ];
+  const pattern = patterns[Math.floor(randomAt(composition.seed, phrase + 120) * patterns.length)];
+  let onsets = composition.style === 'ambient' ? pattern.filter((_, i) => i % 2 === 0) : [...pattern];
+  if (complexity > 0.75 && composition.style !== 'ambient') {
+    const passing = onsets.find((onset, i) => i < onsets.length - 1 && onsets[i + 1] - onset >= 7);
+    if (passing !== undefined) onsets = [...onsets, passing + 3].sort((a, b) => a - b);
+  }
+  const index = onsets.indexOf(slot);
+  const next = index >= 0 ? onsets[index + 1] ?? 29 : slot;
+  return {
+    active: index >= 0,
+    voice: phrase * 5 + Math.max(0, index),
+    hold: Math.max(1, Math.min(6, next - slot - 1)),
+    accent: index === 0 ? 0.82 : index === onsets.length - 1 ? 0.58 : 0.66,
+  };
+}

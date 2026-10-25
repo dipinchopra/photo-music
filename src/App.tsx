@@ -259,6 +259,7 @@ export default function App() {
   useEffect(() => {
     tempoRef.current = controls.tempo;
     music.configure({
+      tempo: controls.tempo,
       transpose: controls.pitch,
       complexity: controls.complexity / 100,
       space: controls.space / 100,
