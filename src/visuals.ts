@@ -75,7 +75,7 @@ export function findEditablePlacement(placements: Placement[], instrument: Place
   return top?.instrument === instrument ? top : undefined;
 }
 
-function drawPhoto(ctx: CanvasRenderingContext2D, image: HTMLImageElement, bounds: Bounds,
+function drawPhoto(ctx: CanvasRenderingContext2D, image: CanvasImageSource, bounds: Bounds,
   placement: Placement, zoom: number, offsetX = 0, offsetY = 0) {
   ctx.save();
   ctx.translate(placement.x, placement.y);
@@ -85,7 +85,7 @@ function drawPhoto(ctx: CanvasRenderingContext2D, image: HTMLImageElement, bound
   ctx.restore();
 }
 
-export function drawVisual(ctx: CanvasRenderingContext2D, image: HTMLImageElement, bounds: Bounds,
+export function drawVisual(ctx: CanvasRenderingContext2D, image: CanvasImageSource, bounds: Bounds,
   placement: Placement, mode: VisualMode, time: number, hit: number, color: string, dpr = 1) {
   ctx.save();
   ctx.scale(dpr, dpr);

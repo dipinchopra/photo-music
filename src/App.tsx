@@ -98,6 +98,8 @@ export default function App() {
   const motionStartsRef = useRef(new Map<number, number>());
   const lastSampleRef = useRef(0);
   const recordingCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const recordingPhotoRef = useRef<HTMLCanvasElement | null>(null);
+  const recordingFrameTimeRef = useRef(-Infinity);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recordingStreamRef = useRef<MediaStream | null>(null);
   const recordingUrlRef = useRef<string | null>(null);
@@ -124,6 +126,11 @@ export default function App() {
       const cropped = document.createElement('canvas');
       const size = recordingSize(image.naturalWidth, image.naturalHeight);
       cropped.width = size.width; cropped.height = size.height;
+      const photo = document.createElement('canvas');
+      photo.width = size.width; photo.height = size.height;
+      photo.getContext('2d')!.drawImage(image, 0, 0, size.width, size.height);
+      recordingPhotoRef.current = photo;
+      recordingFrameTimeRef.current = -Infinity;
       recordingCanvasRef.current = cropped;
       draw();
       const stream = cropped.captureStream(30);
@@ -139,6 +146,7 @@ export default function App() {
         stream.getTracks().forEach(track => track.stop());
         recordingStreamRef.current = null;
         recordingCanvasRef.current = null;
+        recordingPhotoRef.current = null;
         recorderRef.current = null;
         setRecording(false);
         if (!chunks.length) return;
@@ -156,6 +164,7 @@ export default function App() {
       recordingStreamRef.current?.getTracks().forEach(track => track.stop());
       recordingStreamRef.current = null;
       recordingCanvasRef.current = null;
+      recordingPhotoRef.current = null;
       setRecordError('Could not start recording in this browser. Try your phone’s screen recorder.');
     }
   };
@@ -208,7 +217,16 @@ export default function App() {
     }
     ctx.clearRect(0, 0, width, height);
     const { x: dx, y: dy, width: dw, height: dh } = photoBounds(width, height, image.naturalWidth, image.naturalHeight);
-    ctx.drawImage(image, dx, dy, dw, dh);
+    const cropped = recordingCanvasRef.current;
+    const recordingContext = cropped?.getContext('2d');
+    const now = performance.now();
+    const exportFrame = !!cropped && !!recordingContext;
+    const frameDue = now - recordingFrameTimeRef.current >= 1000 / 30 - 1;
+    if (exportFrame && !frameDue) {
+      ctx.drawImage(cropped, dx, dy, dw, dh);
+      return;
+    }
+    const photo = recordingPhotoRef.current ?? image;
 
     const drawnPlacements = [...scenePlacements(), ...livePlacementsRef.current.values()];
 
@@ -216,7 +234,7 @@ export default function App() {
     const renderVisuals = (target: CanvasRenderingContext2D, scale: number) => {
       drawnPlacements.forEach(placement => {
       const color = INSTRUMENTS.find(item => item.id === placement.instrument)!.color;
-      drawVisual(target, image, { x: dx / dpr, y: dy / dpr, width: dw / dpr, height: dh / dpr },
+      drawVisual(target, photo, { x: dx / dpr, y: dy / dpr, width: dw / dpr, height: dh / dpr },
         placement, visualModeRef.current, visualTime, visualHitsRef.current.get(placement.id) ?? 0, color, scale);
       if (visualModeRef.current === 'shapes') drawPlacementMarker(target,
         { x: dx / dpr, y: dy / dpr, width: dw / dpr, height: dh / dpr }, placement, color, scale);
@@ -225,18 +243,20 @@ export default function App() {
         { x: dx / dpr, y: dy / dpr, width: dw / dpr, height: dh / dpr }, placement,
         INSTRUMENTS.find(item => item.id === placement.instrument)!.color, scale));
     };
-    renderVisuals(ctx, dpr);
-    const cropped = recordingCanvasRef.current;
-    const recordingContext = cropped?.getContext('2d');
     if (cropped && recordingContext) {
-      // Render the same live scene directly at export resolution. Copying the
-      // smaller display canvas loses fine refraction and thin ribbon details.
+      // Render effects once per video frame, then reuse that exact frame for
+      // the preview instead of rendering the entire scene twice on every RAF.
       const sx = cropped.width / (dw / dpr), sy = cropped.height / (dh / dpr);
       recordingContext.save();
       recordingContext.setTransform(sx, 0, 0, sy, -dx / dpr * sx, -dy / dpr * sy);
-      recordingContext.drawImage(image, dx / dpr, dy / dpr, dw / dpr, dh / dpr);
+      recordingContext.drawImage(photo, dx / dpr, dy / dpr, dw / dpr, dh / dpr);
       renderVisuals(recordingContext, 1);
       recordingContext.restore();
+      recordingFrameTimeRef.current = now;
+      ctx.drawImage(cropped, dx, dy, dw, dh);
+    } else {
+      ctx.drawImage(image, dx, dy, dw, dh);
+      renderVisuals(ctx, dpr);
     }
   };
 
