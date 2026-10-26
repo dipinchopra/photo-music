@@ -10,13 +10,13 @@ const cells = Array.from({length:16},(_,i)=>({hue:i*22,saturation:i/16,brightnes
 const bounds = {x:30,y:10,width:300,height:420};
 const tone = {hue:120,saturation:.5,brightness:.4,texture:.6,profile:{contour:[.2,.8],activity:[.1,.9]}};
 
-test('upload starter has four editable instruments using real local photo samples', () => {
+test('upload starter has a layered editable ensemble using real local photo samples', () => {
   const sampled = [];
   const loop = createPhotoLoop(bounds,cells,42,0,100,(x,y,r)=>{sampled.push({x,y,r});return tone;});
-  assert.equal(loop.length,4);
+  assert.ok(loop.length >= 6 && loop.length <= 9);
   assert.equal(new Set(loop.map(p=>p.instrument)).size,4);
-  assert.deepEqual(loop.map(p=>p.id),[100,101,102,103]);
-  assert.equal(sampled.length,4);
+  assert.deepEqual(loop.map(p=>p.id),Array.from({length:loop.length},(_,i)=>100+i));
+  assert.equal(sampled.length,loop.length);
   for(const placement of loop){
     assert.equal(placement.tone,tone);
     assert.ok(placement.level>0 && placement.level<=1);
@@ -45,4 +45,18 @@ test('auto placements stay inside portrait, landscape and narrow photo bounds', 
     }
   }
   assert.deepEqual(createPhotoLoop(bounds,[],42,0,1,()=>tone),[]);
+});
+
+test('successive shuffles vary ensemble size, retain one bass and balance answering voices', () => {
+  const loops=Array.from({length:8},(_,version)=>createPhotoLoop(bounds,cells,42,version,1,()=>tone));
+  for(let i=0;i<loops.length;i++) {
+    const loop=loops[i];
+    if(i) assert.notEqual(loop.length,loops[i-1].length);
+    assert.equal(loop.filter(p=>p.instrument==='bass').length,1);
+    assert.ok(loop.filter(p=>p.instrument==='drums').length>=2);
+    const keys=loop.filter(p=>p.instrument==='keys');
+    assert.ok(keys.length>=2);
+    assert.ok(keys.slice(1).every(p=>p.level<keys[0].level && p.radius<keys[0].radius));
+    assert.equal(new Set(loop.map(p=>`${p.x},${p.y}`)).size,loop.length);
+  }
 });

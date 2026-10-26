@@ -2,17 +2,28 @@ import { randomAt } from './composition';
 import type { Bounds } from './scene';
 import type { ImageTone, Instrument, Placement } from './music';
 
-/** Pick editable starting voices from the photo, without changing its harmony. */
+/** Arrange a rhythm section, lead and answering voices from distinct photo regions. */
 export function createPhotoLoop(bounds: Bounds, cells: readonly ImageTone[], seed: number,
   variation: number, firstId: number, sample: (x: number, y: number, radius: number) => ImageTone | null): Placement[] {
   if (!cells.length || bounds.width <= 0 || bounds.height <= 0) return [];
   const arrangementSeed = seed ^ Math.imul(variation + 1, 0x9e3779b9);
   const used = new Set<number>();
-  const instruments: Instrument[] = ['drums', 'bass', 'keys', 'guitar'];
-  const radius = Math.min(48, Math.min(bounds.width, bounds.height) * .12);
+  // Rotate ensemble sizes deliberately, so successive shuffles cannot repeat the same layout.
+  const ensemble = (Math.floor(randomAt(seed, 91) * 4) + variation) % 4;
+  const sections: Instrument[][] = [
+    ['drums', 'drums', 'bass', 'keys', 'keys', 'guitar'],
+    ['drums', 'drums', 'drums', 'bass', 'keys', 'keys', 'guitar'],
+    ['drums', 'drums', 'bass', 'keys', 'keys', 'keys', 'guitar', 'guitar'],
+    ['drums', 'drums', 'drums', 'bass', 'keys', 'keys', 'keys', 'guitar', 'guitar'],
+  ];
+  const instruments = sections[ensemble];
+  const baseRadius = Math.min(48, Math.min(bounds.width, bounds.height) * .12);
   return instruments.map((instrument, lane) => {
+    const voice = instruments.slice(0, lane).filter(value => value === instrument).length;
+    const radius = baseRadius * (instrument === 'bass' ? 1 : voice === 0 ? .95 : .65 + randomAt(arrangementSeed, lane + 400) * .2);
     const score = (cell: ImageTone, index: number) => {
-      const character = instrument === 'drums' ? 1 - cell.brightness
+      const drumTarget = voice === 0 ? .12 : voice === 1 ? .5 : .9;
+      const character = instrument === 'drums' ? 1 - Math.abs(cell.brightness - drumTarget) * 2
         : instrument === 'bass' ? (1 - cell.brightness) * .7 + cell.saturation * .3
         : instrument === 'keys' ? cell.saturation * .5 + (1 - Math.abs(cell.brightness - .55)) * .5
         : cell.texture * .65 + cell.saturation * .35;
@@ -29,7 +40,8 @@ export function createPhotoLoop(bounds: Bounds, cells: readonly ImageTone[], see
     const x = bounds.x + Math.max(marginX, Math.min(bounds.width - marginX, u * bounds.width));
     const y = bounds.y + Math.max(marginY, Math.min(bounds.height - marginY, v * bounds.height));
     return { id: firstId + lane, instrument, x, y, radius,
-      level: instrument === 'keys' ? .52 : instrument === 'guitar' ? .28 : instrument === 'bass' ? .58 : .48,
+      level: instrument === 'keys' ? (voice === 0 ? .52 : .31)
+        : instrument === 'guitar' ? (voice === 0 ? .3 : .2) : instrument === 'bass' ? .58 : (voice === 0 ? .52 : .34),
       tone: sample(x, y, radius) ?? chosen.cell };
   });
 }
