@@ -513,3 +513,12 @@ html, body, #root, .app, .app * {
 .sampleTriggerControls { display: flex; flex: 0 0 auto; gap: 4px; align-items: stretch; padding-right: 8px; border-right: 1px solid #ffffff15; }
 .instrumentDock .sampleTriggerControls button { flex: 0 0 auto; min-width: 64px; padding: 9px; }
 .liveMixControls select { width: 100%; padding: 8px; border: 1px solid #ffffff25; border-radius: 8px; background: #222; color: #eee; }
+.topbar > div:first-child { min-width: 0; }
+.headerActions { flex-shrink: 0; }
+.uploadCompact { display: none; }
+@media (max-width: 700px) {
+  .shuffleLabel, .uploadFull { display: none; }
+  .uploadCompact { display: inline; }
+  .headerActions { gap: 4px; }
+  .headerActions .uploadButton { padding: 10px; font-size: 10px; }
+}

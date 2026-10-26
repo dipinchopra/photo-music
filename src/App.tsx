@@ -3,9 +3,10 @@ import { sampleAverageColor } from './color';
 import { composeImage, type ArpMode } from './composition';
 import { photoBounds, recordingSize, moveCircle, type Motion } from './scene';
 import { drawVisual, drawPlacementMarker, showsPlacementMarker, findDraggablePlacement, VISUAL_MODES, type VisualMode } from './visuals';
+import { createPhotoLoop } from './arrangement';
 import { EditHistory } from './history';
 import { PlaybackRecovery } from './playback';
-import { ChordEngine, type Instrument, type Placement } from './music';
+import { ChordEngine, type Instrument, type Placement, type ImageTone } from './music';
 import { PHOTO_PADS, PAD_KEYS, photoPadAt, photoPadBounds, enterPhotoPad } from './pads';
 import { drawPadHit, PAD_EFFECT_SECONDS, type PadHit } from './padVisuals';
 
@@ -71,6 +72,9 @@ export default function App() {
     id: number; offsetX: number; offsetY: number; startX: number; startY: number; moved: boolean; before: Placement[]; removeOnTap: boolean;
   } | null>(null);
   const nextIdRef = useRef(1);
+  const imageCellsRef = useRef<ImageTone[]>([]);
+  const imageSeedRef = useRef(0);
+  const arrangementVersionRef = useRef(0);
   const historyRef = useRef(new EditHistory<Placement[]>());
   const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false });
   const recoveryRef = useRef<PlaybackRecovery | null>(null);
@@ -620,8 +624,20 @@ export default function App() {
     }
   };
 
+  const shufflePhotoLoop = (record = true) => {
+    const canvas = canvasRef.current, image = imageRef.current;
+    if (!canvas || !image || !imageCellsRef.current.length) return;
+    const rect = canvas.getBoundingClientRect();
+    const bounds = photoBounds(rect.width, rect.height, image.naturalWidth, image.naturalHeight);
+    const next = createPhotoLoop(bounds, imageCellsRef.current, imageSeedRef.current,
+      arrangementVersionRef.current++, nextIdRef.current, sampleToneAt);
+    nextIdRef.current += next.length;
+    updatePlacements(next, .12, record);
+  };
+
   const upload = (file?: File) => {
     if (!file) return;
+    void music.unlock().catch(() => setAudioPaused(true));
     const url = URL.createObjectURL(file);
     const image = new Image();
     image.onload = () => {
@@ -647,14 +663,21 @@ export default function App() {
           cells.push({ hue: cell.h, saturation: cell.s, brightness: cell.l, texture: cell.texture, profile: cell.profile });
         }
         const composition = composeImage(cells);
+        imageCellsRef.current = cells;
+        imageSeedRef.current = composition.seed;
+        arrangementVersionRef.current = 0;
         music.setComposition(composition);
+        music.configure({ tempo: composition.tempo });
         setImageStyle({ ambient: 'Soft atmosphere', glass: 'Glass bells', plucked: 'Plucked groove', pulse: 'Synth pulse' }[composition.style]);
         setControls(current => ({ ...current, tempo: composition.tempo }));
       }
       stopLive(); music.stopSamples(); setLoopPads([]);
-      updatePlacements([], 0.12, false);
       historyRef.current.clear(); syncHistory();
+      setMode('place'); modeRef.current = 'place'; setSheet(null);
+      placementsRef.current = []; setPlacements([]); music.stop(.12);
       setHasImage(true);
+      // Wait for the photo/status row layout before choosing canvas positions.
+      requestAnimationFrame(() => { if (imageRef.current === image) shufflePhotoLoop(false); });
       URL.revokeObjectURL(url);
     };
     image.src = url;
@@ -662,11 +685,14 @@ export default function App() {
 
   return <main className="app" onContextMenu={event => event.preventDefault()}>
     <header className="topbar">
-      <div><div className="eyebrow">IMAGE / MUSIC</div><h1>Build a photo loop</h1></div>
+      <div><div className="eyebrow">IMAGE / MUSIC</div><h1>Tap your photo to make music</h1></div>
       <div className="headerActions">
+      <button className="recordButton shuffleButton" disabled={!hasImage} aria-label="Shuffle the photo loop" title="Create another loop from this photo. Undo to go back." onClick={() => shufflePhotoLoop()}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h3c5 0 7 12 12 12h3m-4-4 4 4-4 4M3 18h3c2 0 4-3 6-6s4-6 6-6h3m-4-4 4 4-4 4" /></svg><span className="shuffleLabel">Shuffle</span>
+      </button>
       <button className={`recordButton ${recording ? 'recording' : ''}`} disabled={!hasImage} onClick={() => { if (recording) stopRecording(); else void startRecording(); }} aria-pressed={recording}><span aria-hidden="true">{recording ? '■' : '●'}</span> {recording ? 'Stop' : 'Record'}</button>
-      <label className="uploadButton">{hasImage ? '↗ Change photo' : '↗ Add photo'}
-        <input type="file" accept="image/*" onChange={(e) => upload(e.target.files?.[0])} />
+      <label className="uploadButton" aria-label={hasImage ? 'Change photo' : 'Add photo'}><span className="uploadFull">{hasImage ? '↗ Change photo' : '↗ Add photo'}</span><span className="uploadCompact">↗ Photo</span>
+        <input type="file" accept="image/*" onClick={() => { void music.unlock().catch(() => {}); }} onChange={(e) => upload(e.target.files?.[0])} />
       </label>
       </div>
     </header>
@@ -679,7 +705,7 @@ export default function App() {
       <section className={`stage ${hasImage ? 'hasImage' : ''}`}>
 
         {!hasImage && <label className="emptyState"><div className="orb"><span>＋</span></div><strong>Choose a photo</strong><span>Place instruments onto its colors and textures.</span><b className="emptyCta">Choose a photo ↗</b>
-          <input type="file" accept="image/*" onChange={(e) => upload(e.target.files?.[0])} /></label>}
+          <input type="file" accept="image/*" onClick={() => { void music.unlock().catch(() => {}); }} onChange={(e) => upload(e.target.files?.[0])} /></label>}
         <canvas ref={canvasRef} draggable={false} className={`canvas placementCanvas ${mode === 'live' ? 'liveCanvas' : ''}`}
           onContextMenu={e => e.preventDefault()}
           onDragStart={e => e.preventDefault()}
