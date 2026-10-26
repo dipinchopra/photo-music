@@ -321,12 +321,14 @@ export class ChordEngine {
     drums: 0.6, drumPunch: 0.7, drumDensity: 0.5, drumDelay: 0, fourOnFloor: true,
   };
 
-  setComposition(composition: Composition) {
+  setComposition(composition: Composition, preserveTransport = false) {
     this.composition = composition;
     this.variation = randomAt(composition.seed, 3);
-    this.step = 0;
-    this.nextStepTime = null;
-    this.transportFrames = [];
+    if (!preserveTransport) {
+      this.step = 0;
+      this.nextStepTime = null;
+      this.transportFrames = [];
+    }
     this.keyHistory.clear();
     this.updateSpace();
   }
@@ -637,7 +639,7 @@ export class ChordEngine {
       const phrase = phraseStep(composition, placement.tone, this.step, this.controls.complexity);
       const degree = arpeggiating
         ? arpeggioDegree(root, this.step, this.controls.keysArp, this.controls.keysArpRate, Math.floor(placement.tone.hue / 90) + lane)
-        : beat % 4 === 0 ? root + [0, 2, 4][Math.abs(phrase.degree) % 3] : phrase.degree;
+        : root + [0, 2, 4, 6][Math.abs(phrase.degree) % 4];
       const register = placement.tone.brightness > 0.68 ? 36 : 24;
       const pitch = scaleNote(composition, degree) + this.controls.transpose + register;
       if (!arpeggiating && previous?.pitch === pitch && this.step - previous.step < 4) continue;

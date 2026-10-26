@@ -29,7 +29,7 @@ export function createPhotoLoop(bounds: Bounds, cells: readonly ImageTone[], see
     const x = bounds.x + Math.max(marginX, Math.min(bounds.width - marginX, u * bounds.width));
     const y = bounds.y + Math.max(marginY, Math.min(bounds.height - marginY, v * bounds.height));
     return { id: firstId + lane, instrument, x, y, radius,
-      level: instrument === 'keys' ? .55 : instrument === 'guitar' ? .48 : .6,
+      level: instrument === 'keys' ? .52 : instrument === 'guitar' ? .28 : instrument === 'bass' ? .58 : .48,
       tone: sample(x, y, radius) ?? chosen.cell };
   });
 }

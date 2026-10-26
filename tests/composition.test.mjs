@@ -5,7 +5,7 @@ import { stripTypeScriptTypes } from 'node:module';
 
 const source = readFileSync(new URL('../src/composition.ts', import.meta.url), 'utf8');
 const compiled = stripTypeScriptTypes(source);
-const { composeImage, phraseStep, scaleNote, melodyEvent, circleEvent, arpeggioDegree } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
+const { composeImage, phraseStep, scaleNote, melodyEvent, circleEvent, arpeggioDegree, arrangePhotoMusic } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 const tone = (hue, brightness, texture = 0.2, saturation = 0.6) => ({ hue, brightness, texture, saturation });
 const dark = Array.from({ length: 16 }, (_, i) => tone(210 + i, 0.18, 0.1));
 const bright = Array.from({ length: 16 }, (_, i) => tone(30 + i, 0.8, 0.8));
@@ -115,4 +115,27 @@ test('arpeggiator follows chord-tone direction and selected beat rate', () => {
   assert.deepEqual(notes('down'), [7, 4, 2, 0, 7, 4]);
   assert.deepEqual(notes('upDown'), [0, 2, 4, 7, 4, 2]);
   assert.deepEqual(Array.from({ length: 8 }, (_, step) => arpeggioDegree(3, step, 'up', 2)), [3, 3, 5, 5, 7, 7, 10, 10]);
+});
+
+test('musical shuffle changes pitch, arpeggios and harmony reproducibly while preserving clock', () => {
+  const before = JSON.stringify(bright);
+  const results = Array.from({length: 8}, (_, i) => arrangePhotoMusic(bright, i));
+  assert.deepEqual(results[0], arrangePhotoMusic(bright, 0));
+  for (let i = 1; i < results.length; i++) {
+    assert.notEqual(results[i].composition.tonic, results[i - 1].composition.tonic);
+    assert.notEqual(results[i].arps.keys, results[i - 1].arps.keys);
+    assert.notEqual(results[i].composition.seed, results[i - 1].composition.seed);
+    assert.equal(results[i].composition.tempo, results[0].composition.tempo);
+    assert.equal(results[i].composition.swing, results[0].composition.swing);
+  }
+  for (const result of results) {
+    assert.ok(result.controls.complexity <= 42);
+    assert.ok(result.controls.drumDensity <= 46);
+    assert.equal(result.composition.progression.length, 4);
+    for (const degree of result.composition.progression) {
+      assert.ok(result.composition.scale.includes((scaleNote(result.composition, degree) - result.composition.tonic + 12) % 12));
+    }
+  }
+  assert.notDeepEqual(results[0], arrangePhotoMusic(dark, 0));
+  assert.equal(JSON.stringify(bright), before);
 });

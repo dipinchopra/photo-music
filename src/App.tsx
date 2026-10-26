@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { sampleAverageColor } from './color';
-import { composeImage, type ArpMode } from './composition';
+import { composeImage, arrangePhotoMusic, type ArpMode } from './composition';
 import { photoBounds, recordingSize, moveCircle, type Motion } from './scene';
 import { drawVisual, drawPlacementMarker, showsPlacementMarker, findDraggablePlacement, VISUAL_MODES, type VisualMode } from './visuals';
 import { createPhotoLoop } from './arrangement';
@@ -76,6 +76,8 @@ export default function App() {
   const imageSeedRef = useRef(0);
   const arrangementVersionRef = useRef(0);
   const historyRef = useRef(new EditHistory<Placement[]>());
+  const arrangementRestoreRef = useRef<(() => void) | null>(null);
+  const arrangementHistoryRef = useRef(new WeakMap<Placement[], () => void>());
   const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false });
   const recoveryRef = useRef<PlaybackRecovery | null>(null);
 
@@ -600,18 +602,19 @@ export default function App() {
   const rememberEdit = (before: Placement[]) => { historyRef.current.record(before); syncHistory(); };
   const undoEdit = () => {
     const previous = historyRef.current.undo(placementsRef.current);
-    if (previous) updatePlacements(previous, 0.12, false);
+    if (previous) { arrangementHistoryRef.current.get(previous)?.(); updatePlacements(previous, 0.12, false); }
     syncHistory();
   };
   const redoEdit = () => {
     const next = historyRef.current.redo(placementsRef.current);
-    if (next) updatePlacements(next, 0.12, false);
+    if (next) { arrangementHistoryRef.current.get(next)?.(); updatePlacements(next, 0.12, false); }
     syncHistory();
   };
 
   const updatePlacements = (next: Placement[], release = 0.12, record = true, before = placementsRef.current, keepTransition = false) => {
     if (!keepTransition) music.cancelShuffle();
     if (record) rememberEdit(before);
+    if (arrangementRestoreRef.current) arrangementHistoryRef.current.set(next, arrangementRestoreRef.current);
     placementsRef.current = next;
     const ids = new Set(next.map(placement => placement.id));
     next.forEach(placement => {
@@ -631,12 +634,28 @@ export default function App() {
     if (!canvas || !image || !imageCellsRef.current.length) return;
     const rect = canvas.getBoundingClientRect();
     const bounds = photoBounds(rect.width, rect.height, image.naturalWidth, image.naturalHeight);
+    const variation = arrangementVersionRef.current++;
+    const arrangement = arrangePhotoMusic(imageCellsRef.current, variation);
+    const applyMusic = () => {
+      arrangementRestoreRef.current = applyMusic;
+      music.setComposition(arrangement.composition, true);
+      const c = arrangement.controls, a = arrangement.arps;
+      // Apply synchronously at the silent handoff, before the scheduler emits new notes.
+      music.configure({ transpose: c.pitch, complexity: c.complexity / 100,
+        keysTone: c.keysTone / 100, keysSustain: c.keysSustain / 100,
+        guitarTone: c.guitarTone / 100, guitarStrum: c.guitarStrum / 100,
+        bassMovement: c.bassMovement / 100, bassDepth: c.bassDepth / 100,
+        drumDensity: c.drumDensity / 100, drumPunch: c.drumPunch / 100,
+        keysArp: a.keys, guitarArp: a.guitar, keysArpRate: a.keysRate, guitarArpRate: a.guitarRate });
+      setControls(current => ({ ...current, ...c }));
+      setArps(a);
+    };
     const next = createPhotoLoop(bounds, imageCellsRef.current, imageSeedRef.current,
-      arrangementVersionRef.current++, nextIdRef.current, sampleToneAt);
+      variation, nextIdRef.current, sampleToneAt);
     nextIdRef.current += next.length;
-    if (!record) { updatePlacements(next, .12, false); return; }
+    if (!record) { applyMusic(); updatePlacements(next, .12, false); return; }
     setShuffling(true); startBeat();
-    void music.shufflePlacements(next, () => updatePlacements(next, .12, true, placementsRef.current, true))
+    void music.shufflePlacements(next, () => { applyMusic(); updatePlacements(next, .12, true, placementsRef.current, true); })
       .finally(() => setShuffling(false));
   };
 

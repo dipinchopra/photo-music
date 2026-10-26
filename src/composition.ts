@@ -125,3 +125,31 @@ export function arpeggioDegree(root: number, step: number, mode: ArpMode, rate: 
   const pattern = mode === 'down' ? [3, 2, 1, 0] : mode === 'upDown' ? [0, 1, 2, 3, 2, 1] : [0, 1, 2, 3];
   return root + intervals[pattern[index % pattern.length]];
 }
+
+/** Curated musical roles: a lead and a quieter response, rather than two competing leads. */
+export function arrangePhotoMusic(cells: ImageTone[], variation: number) {
+  const base = composeImage(cells);
+  const seed = base.seed ^ Math.imul(variation + 1, 0x85ebca6b);
+  const pick = (index: number) => randomAt(seed, index);
+  const palette = (Math.floor(randomAt(base.seed, 91) * 4) + variation) % 4;
+  const progressions = [[0, 5, 3, 4], [0, 3, 5, 4], [0, 4, 5, 3], [0, 2, 5, 3]];
+  const keysArp: ArpMode = ['off', 'up', 'down', 'upDown'][palette] as ArpMode;
+  const composition: Composition = {
+    ...base, seed, tonic: (base.tonic + [0, 5, 7, 2][variation % 4]) % 12,
+    progression: progressions[(palette + Math.floor(pick(2) * 4)) % 4],
+    // Preserve the transport groove during the fade; variation comes from notes and roles.
+    rhythm: base.rhythm?.map((value, index) => Math.min(1, value * .6 + pick(100 + index) * .4)),
+  };
+  return {
+    composition,
+    arps: { keys: keysArp, guitar: (palette === 0 ? 'upDown' : 'off') as ArpMode,
+      keysRate: palette === 3 ? 1 : 2, guitarRate: 2 },
+    controls: {
+      pitch: 0, complexity: 24 + Math.round(pick(3) * 18),
+      keysTone: 30 + Math.round(pick(4) * 25), keysSustain: palette === 0 ? 78 : 38,
+      guitarTone: 32 + Math.round(pick(5) * 22), guitarStrum: 35 + Math.round(pick(6) * 30),
+      bassMovement: palette % 2 ? 48 : 24, bassDepth: 78,
+      drumDensity: 24 + Math.round(pick(7) * 22), drumPunch: 52 + Math.round(pick(8) * 18),
+    },
+  };
+}
