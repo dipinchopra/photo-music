@@ -124,10 +124,10 @@ export default function App() {
   const [visualMode, setVisualMode] = useState<VisualMode>('living');
   const visualModeRef = useRef<VisualMode>('living');
 
-  const [motion, setMotion] = useState<Motion>('off');
-  const motionRef = useRef<Motion>('off');
-  const [motionAmount, setMotionAmount] = useState(55);
-  const motionAmountRef = useRef(0.55);
+  const [motion, setMotion] = useState<Motion>('sway');
+  const motionRef = useRef<Motion>('sway');
+  const [motionAmount, setMotionAmount] = useState(200);
+  const motionAmountRef = useRef(2);
   const motionSecondsRef = useRef(0);
   const motionStartsRef = useRef(new Map<number, number>());
   const lastSampleRef = useRef(0);
@@ -138,6 +138,7 @@ export default function App() {
   const recordingStreamRef = useRef<MediaStream | null>(null);
   const recordingUrlRef = useRef<string | null>(null);
   const [recording, setRecording] = useState(false);
+  const [shuffling, setShuffling] = useState(false);
   const [recordingUrl, setRecordingUrl] = useState<string | null>(null);
   const [recordingType, setRecordingType] = useState('');
   const [recordError, setRecordError] = useState('');
@@ -608,7 +609,8 @@ export default function App() {
     syncHistory();
   };
 
-  const updatePlacements = (next: Placement[], release = 0.12, record = true, before = placementsRef.current) => {
+  const updatePlacements = (next: Placement[], release = 0.12, record = true, before = placementsRef.current, keepTransition = false) => {
+    if (!keepTransition) music.cancelShuffle();
     if (record) rememberEdit(before);
     placementsRef.current = next;
     const ids = new Set(next.map(placement => placement.id));
@@ -632,7 +634,10 @@ export default function App() {
     const next = createPhotoLoop(bounds, imageCellsRef.current, imageSeedRef.current,
       arrangementVersionRef.current++, nextIdRef.current, sampleToneAt);
     nextIdRef.current += next.length;
-    updatePlacements(next, .12, record);
+    if (!record) { updatePlacements(next, .12, false); return; }
+    setShuffling(true); startBeat();
+    void music.shufflePlacements(next, () => updatePlacements(next, .12, true, placementsRef.current, true))
+      .finally(() => setShuffling(false));
   };
 
   const upload = (file?: File) => {
@@ -687,7 +692,7 @@ export default function App() {
     <header className="topbar">
       <div><div className="eyebrow">IMAGE / MUSIC</div><h1>Tap your photo to make music</h1></div>
       <div className="headerActions">
-      <button className="recordButton shuffleButton" disabled={!hasImage} aria-label="Shuffle the photo loop" title="Create another loop from this photo. Undo to go back." onClick={() => shufflePhotoLoop()}>
+      <button className="recordButton shuffleButton" disabled={!hasImage || shuffling} aria-busy={shuffling} aria-label="Shuffle the photo loop" title="Create another loop from this photo. Undo to go back." onClick={() => shufflePhotoLoop()}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h3c5 0 7 12 12 12h3m-4-4 4 4-4 4M3 18h3c2 0 4-3 6-6s4-6 6-6h3m-4-4 4 4-4 4" /></svg><span className="shuffleLabel">Shuffle</span>
       </button>
       <button className={`recordButton ${recording ? 'recording' : ''}`} disabled={!hasImage} onClick={() => { if (recording) stopRecording(); else void startRecording(); }} aria-pressed={recording}><span aria-hidden="true">{recording ? '■' : '●'}</span> {recording ? 'Stop' : 'Record'}</button>

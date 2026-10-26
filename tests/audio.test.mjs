@@ -17,6 +17,7 @@ class Param {
   setValueAtTime(v, time) { this.value = v; this.events.push({kind: 'set', value: v, time}); }
   setTargetAtTime(v, time, constant) { this.value = v; this.target = { v, time, constant }; }
   cancelAndHoldAtTime(time) { this.heldAt = time; }
+  linearRampToValueAtTime(v, time) { this.value = v; this.events.push({kind: 'linear', value: v, time}); }
   exponentialRampToValueAtTime(v, time) { this.value = v; this.events.push({kind: 'exponential', value: v, time}); }
   cancelScheduledValues() {}
 }
@@ -520,4 +521,57 @@ test('separate mix levels survive Safari audio graph reconstruction', async () =
   assert.equal(engine.sampleMaster.gain.value,.4);
   assert.equal(engine.sampleMix.get('bass').gain.value,.2);
   assert.equal(engine.placedMix.get('bass').gain.value,.8);
+});
+
+test('Shuffle fades down and up on beats, commits only at the quiet handoff, and leaves live audio alone', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ok:true,arrayBuffer:async()=>new ArrayBuffer(48)});
+  try {
+    const engine=new ChordEngine();
+    engine.setComposition({...composeImage([cell]),style:'plucked',swing:.2}); engine.configure({tempo:120});
+    await engine.prepareSamples('https://example.com/samples/');
+    await engine.playPlacements([placement]);
+    await engine.playSample(12, placement);
+    const context=Context.instances.at(-1);
+    const sample=context.bufferSources.find(s=>s.buffer?.original);
+    const oldSources=[...engine.placedVoices];
+    const next=[{...placement,id:22,x:180}];
+    let commits=0;
+    const transition=engine.shufflePlacements(next,()=>{commits++;});
+    assert.equal(commits,0,'do not replace the board on the button click');
+    for(let i=1;i<=2;i++){context.currentTime=i*.25;engine.schedule();}
+    const fade=engine.shuffleGain.gain.events;
+    assert.deepEqual(fade.map(e=>e.value),[1,0,1]);
+    assert.ok(Math.abs(fade[1].time-fade[0].time-.5)<1e-9);
+    assert.ok(Math.abs(fade[2].time-fade[1].time-.5)<1e-9);
+    assert.equal(commits,0,'the outgoing arrangement plays during fade down');
+    for(let i=3;i<=7;i++){context.currentTime=i*.25;engine.schedule();}
+    assert.equal(await transition,true);
+    assert.equal(commits,1);
+    assert.equal(engine.placements[0].id,22);
+    assert.ok(oldSources.every(source=>Math.abs(source.stopTime-fade[1].time)<1e-9),'old voices end at zero gain');
+    assert.equal(sample.stopTime,undefined,'live samples are not faded or stopped');
+    assert.equal(engine.sampleMaster.gain.value,.55);
+  } finally {globalThis.fetch=originalFetch;}
+});
+
+test('cancelled Shuffle cannot replace a cleared board, and silent boards do not wait for a beat', async () => {
+  const engine=new ChordEngine();
+  await engine.playPlacements([placement]);
+  let commits=0;
+  const pending=engine.shufflePlacements([{...placement,id:2}],()=>{commits++;});
+  engine.stop();
+  assert.equal(await pending,false);
+  const context=Context.instances.at(-1); context.currentTime=8;engine.schedule();
+  assert.equal(commits,0);
+  assert.equal(await engine.shufflePlacements([placement],()=>{commits++;engine.updatePlacements([placement]);}),true);
+  assert.equal(commits,1);
+});
+
+test('tempo edits safely cancel a pending shuffle without changing the arrangement', async () => {
+  const engine=new ChordEngine(); await engine.playPlacements([placement]);
+  const pending=engine.shufflePlacements([{...placement,id:2}],()=>assert.fail('stale shuffle committed'));
+  engine.configure({tempo:120});
+  assert.equal(await pending,false);
+  assert.equal(engine.placements[0].id,placement.id);
 });

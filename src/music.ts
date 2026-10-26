@@ -69,6 +69,10 @@ export class ChordEngine {
   private output: GainNode | null = null;
   private placedMaster: GainNode | null = null;
   private sampleMaster: GainNode | null = null;
+  private shuffleGain: GainNode | null = null;
+  private placedVoices = new Set<AudioScheduledSourceNode>();
+  private shuffleJob: { next: Placement[]; commit: () => void; resolve: (done: boolean) => void;
+    cutStep?: number; finishStep?: number } | null = null;
   private placedMix = new Map<Instrument, GainNode>();
   private sampleMix = new Map<Instrument, GainNode>();
   private recorderOutput: MediaStreamAudioDestinationNode | null = null;
@@ -92,6 +96,45 @@ export class ChordEngine {
   get hasSampleLoops() { return this.sampleLoops.size > 0; }
   onSampleHit: ((index: number, placement: Placement) => void) | null = null;
   get samplesReady() { return this.samples.ready; }
+
+  /** A two-beat handoff: fade down, swap on the beat, then fade up. */
+  shufflePlacements(next: Placement[], commit: () => void): Promise<boolean> {
+    this.cancelShuffle();
+    if (!this.running || !this.placements.length) { commit(); return Promise.resolve(true); }
+    return new Promise(resolve => { this.shuffleJob = { next, commit, resolve }; this.schedule(); });
+  }
+
+  cancelShuffle() {
+    if (!this.shuffleJob) return;
+    this.shuffleJob.resolve(false); this.shuffleJob = null;
+    if (this.shuffleGain && this.context) {
+      const now = this.context.currentTime;
+      if (typeof this.shuffleGain.gain.cancelAndHoldAtTime === 'function') this.shuffleGain.gain.cancelAndHoldAtTime(now);
+      else this.shuffleGain.gain.cancelScheduledValues(now);
+      this.shuffleGain.gain.setTargetAtTime(1, now, .04);
+    }
+  }
+
+  private advanceShuffle(at: number) {
+    const job = this.shuffleJob;
+    if (!job || !this.shuffleGain) return;
+    if (job.cutStep === undefined && this.step % 2 === 0) {
+      const beat = 60 / this.controls.tempo;
+      job.cutStep = this.step + 2; job.finishStep = this.step + 4;
+      this.shuffleGain.gain.cancelScheduledValues(at);
+      this.shuffleGain.gain.setValueAtTime(1, at);
+      this.shuffleGain.gain.linearRampToValueAtTime(0, at + beat);
+      this.shuffleGain.gain.linearRampToValueAtTime(1, at + beat * 2);
+    } else if (this.step === job.cutStep) {
+      // Old voices are silent at the handoff; samples use a separate mix.
+      this.placedVoices.forEach(source => { try { source.stop(at); } catch {} });
+      this.placedVoices.clear();
+      this.updatePlacements(job.next);
+      job.commit();
+    } else if (job.finishStep !== undefined && this.step >= job.finishStep) {
+      this.shuffleJob = null; job.resolve(true);
+    }
+  }
 
   async prepareSamples(baseUrl: string) {
     // Create the graph synchronously on the gesture; decoding need not wait
@@ -172,7 +215,7 @@ export class ChordEngine {
       filter.disconnect();
       if (voice.timer !== undefined) { window.clearTimeout(voice.timer); this.hitTimers.delete(voice.timer); }
       this.sampleVoices = this.sampleVoices.filter(item => item !== voice);
-    });
+    }, false);
     source.start(now);
     if (!notify) return;
     const wait = (now - this.context.currentTime) * 1000;
@@ -289,6 +332,7 @@ export class ChordEngine {
   }
 
   configure(next: Partial<MusicControls>) {
+    if (next.tempo !== undefined && next.tempo !== this.controls.tempo) this.cancelShuffle();
     const spaceChanged = next.space !== undefined && next.space !== this.controls.space;
     this.controls = { ...this.controls, ...next };
     this.updateMix();
@@ -320,6 +364,7 @@ export class ChordEngine {
       this.activeGains = [];
       this.activeSources = [];
       this.sampleVoices = [];
+      this.placedVoices.clear();
       this.timbreBindings.clear();
       const AudioContextClass = window.AudioContext ||
         (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -329,7 +374,8 @@ export class ChordEngine {
       this.output = this.context.createGain();
       this.placedMaster = this.context.createGain();
       this.sampleMaster = this.context.createGain();
-      this.placedMaster.connect(this.output); this.sampleMaster.connect(this.output);
+      this.shuffleGain = this.context.createGain(); this.shuffleGain.gain.value = 1;
+      this.placedMaster.connect(this.shuffleGain); this.shuffleGain.connect(this.output); this.sampleMaster.connect(this.output);
       this.placedMix.clear(); this.sampleMix.clear();
       for (const instrument of ['keys', 'guitar', 'bass', 'drums'] as const) {
         const placed = this.context.createGain(), sample = this.context.createGain();
@@ -440,11 +486,13 @@ export class ChordEngine {
     });
   }
 
-  private trackSource(source: AudioScheduledSourceNode, gain: GainNode, start: number, cleanup = () => {}) {
+  private trackSource(source: AudioScheduledSourceNode, gain: GainNode, start: number, cleanup = () => {}, placed = true) {
+    if (placed) this.placedVoices.add(source);
     this.sourceStarts.set(source, start);
     this.activeSources.push(source);
     this.activeGains.push(gain);
     source.onended = () => {
+      this.placedVoices.delete(source);
       cleanup();
       this.activeSources = this.activeSources.filter(item => item !== source);
       this.activeGains = this.activeGains.filter(item => item !== gain);
@@ -541,6 +589,7 @@ export class ChordEngine {
   pulse(atTime?: number): Instrument[] {
     if ((!this.placements.length && !this.hasSampleLoops) || !this.running) return [];
     this.scheduledTime = atTime ?? this.context!.currentTime;
+    this.advanceShuffle(this.scheduledTime);
     this.transportFrames.push({ step: this.step, time: this.scheduledTime });
     if (this.transportFrames.length > 128) this.transportFrames.shift();
     this.soundingPlacement = null;
@@ -704,6 +753,7 @@ export class ChordEngine {
   }
 
   stop(release = 0.12, preserveSampleLoops = false) {
+    this.cancelShuffle(); this.placedVoices.clear();
     this.transportFrames = [];
     if (preserveSampleLoops) this.sampleLoops.forEach(loop => { loop.startStep = this.step; });
     else this.sampleLoops.clear();
