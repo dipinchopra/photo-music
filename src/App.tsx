@@ -700,8 +700,6 @@ export default function App() {
       setMode('place'); modeRef.current = 'place'; setSheet(null);
       placementsRef.current = []; setPlacements([]); music.stop(.12);
       setHasImage(true);
-      // Wait for the photo/status row layout before choosing canvas positions.
-      requestAnimationFrame(() => { if (imageRef.current === image) shufflePhotoLoop(false); });
       URL.revokeObjectURL(url);
     };
     image.src = url;
