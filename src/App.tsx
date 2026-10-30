@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { sampleAverageColor } from './color';
-import { composeImage, arrangePhotoMusic, type ArpMode, DEFAULT_IMAGE_SETTINGS, IMAGE_SCALES, imageNote, type ImageSettings } from './composition';
+import { composeImage, arrangePhotoMusic, type ArpMode, DEFAULT_LOOP_THEORY, LOOP_SCALES, type LoopTheory } from './composition';
 import { photoBounds, recordingSize, moveCircle, type Motion } from './scene';
 import { drawVisual, drawPlacementMarker, showsPlacementMarker, findDraggablePlacement, VISUAL_MODES, type VisualMode } from './visuals';
 import { createPhotoLoop } from './arrangement';
@@ -82,9 +82,9 @@ export default function App() {
   const recoveryRef = useRef<PlaybackRecovery | null>(null);
 
   const sheetDragStart = useRef<number | null>(null);
-  const [sheet, setSheet] = useState<Instrument | 'mix' | 'motion' | 'visuals' | null>(null);
-  const openSheet = (value: Instrument | 'mix' | 'motion' | 'visuals') => {
-    if (value !== 'mix' && value !== 'motion' && value !== 'visuals') {
+  const [sheet, setSheet] = useState<Instrument | 'mix' | 'motion' | 'visuals' | 'theory' | null>(null);
+  const openSheet = (value: Instrument | 'mix' | 'motion' | 'visuals' | 'theory') => {
+    if (value !== 'mix' && value !== 'motion' && value !== 'visuals' && value !== 'theory') {
       setSelected(value);
     }
     setSheet(current => current === value ? null : value);
@@ -102,11 +102,7 @@ export default function App() {
   const [imageStyle, setImageStyle] = useState('');
   const [placements, setPlacements] = useState<Placement[]>([]);
   const [selected, setSelected] = useState<Instrument>('keys');
-  const [mode, setMode] = useState<'touch' | 'place' | 'live'>('touch');
-  const [imageSettings, setImageSettings] = useState<ImageSettings>({ ...DEFAULT_IMAGE_SETTINGS });
-  const imageTouchesRef = useRef(new Map<number, { x: number; y: number; tone: ImageTone; midi: number }>());
-  const imagePendingRef = useRef(new Map<number, object>());
-  const [touchLabel, setTouchLabel] = useState('Tap a color · hold to sustain · drag to explore');
+  const [mode, setMode] = useState<'place' | 'live'>('place');
   const modeRef = useRef(mode);
   modeRef.current = mode;
   const [sampleTrigger, setSampleTrigger] = useState<'once' | 'loop'>('once');
@@ -117,6 +113,7 @@ export default function App() {
   const [kitStatus, setKitStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [radius, setRadius] = useState(50);
   const [fourOnFloor, setFourOnFloor] = useState(false);
+  const [loopTheory, setLoopTheory] = useState<LoopTheory>({ ...DEFAULT_LOOP_THEORY });
   const [arps, setArps] = useState({ keys: 'off' as ArpMode, guitar: 'off' as ArpMode, keysRate: 2, guitarRate: 2 });
   const [controls, setControls] = useState({
     tempo: 96, pitch: 0, complexity: 52, space: 58,
@@ -277,11 +274,6 @@ export default function App() {
     const renderVisuals = (target: CanvasRenderingContext2D, scale: number) => {
       padHitsRef.current.forEach(hit => drawPadHit(target, photo,
         { x: dx / dpr, y: dy / dpr, width: dw / dpr, height: dh / dpr }, hit, now / 1000, scale, visualModeRef.current));
-      imageTouchesRef.current.forEach((touch, id) => {
-        drawVisual(target, photo, { x: dx / dpr, y: dy / dpr, width: dw / dpr, height: dh / dpr },
-          { id, x: touch.x, y: touch.y, radius: 34, level: 1, instrument: 'keys', tone: touch.tone },
-          visualModeRef.current, now / 1000, 1, `hsl(${touch.tone.hue}, 75%, 75%)`, scale);
-      });
       drawnPlacements.forEach(placement => {
       const color = INSTRUMENTS.find(item => item.id === placement.instrument)!.color;
       drawVisual(target, photo, { x: dx / dpr, y: dy / dpr, width: dw / dpr, height: dh / dpr },
@@ -346,7 +338,7 @@ export default function App() {
     beatRef.current = null;
   };
 
-  useEffect(() => { music.configureImage(imageSettings); }, [imageSettings]);
+  useEffect(() => { music.setLoopTheory(loopTheory); }, [loopTheory]);
 
   useEffect(() => {
     music.configure({
@@ -468,36 +460,6 @@ export default function App() {
     startBeat();
   };
 
-  const noteName = (midi: number) => `${['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'][midi % 12]}${Math.floor(midi / 12) - 1}`;
-
-  const playImageAt = (clientX: number, clientY: number, pointerId: number, start = false) => {
-    if (!hasImage || modeRef.current !== 'touch') return;
-    const canvas = canvasRef.current!, image = imageRef.current!;
-    const rect = canvas.getBoundingClientRect();
-    const bounds = photoBounds(rect.width, rect.height, image.naturalWidth, image.naturalHeight);
-    const x = clientX - rect.left, y = clientY - rect.top;
-    if (x < bounds.x || y < bounds.y || x > bounds.x + bounds.width || y > bounds.y + bounds.height) {
-      stopLive(pointerId); return;
-    }
-    const point = { x, y };
-    const tone = sampleToneAt(point.x, point.y, 12);
-    if (!tone) return;
-    const previous = imageTouchesRef.current.get(pointerId);
-    const note = imageNote(tone, imageSettings, previous?.midi);
-    const touch = { ...point, tone, midi: note.midi };
-    imageTouchesRef.current.set(pointerId, touch);
-    setTouchLabel(`${noteName(note.midi)} · ${tone.saturation < .12 ? 'Lightness' : 'Color'} → note · brightness → tone`);
-    if (start || !imagePendingRef.current.has(pointerId)) {
-      const token = {};
-      imagePendingRef.current.set(pointerId, token);
-      void music.startImageTouch(pointerId, tone, () => imagePendingRef.current.get(pointerId) === token
-        && modeRef.current === 'touch' && !document.hidden).then(() => {
-          const latest = imageTouchesRef.current.get(pointerId);
-          if (latest && imagePendingRef.current.get(pointerId) === token) music.updateImageTouch(pointerId, latest.tone);
-        }).catch(() => setAudioPaused(true));
-    } else music.updateImageTouch(pointerId, tone);
-  };
-
   const loadLiveKit = async () => {
     setKitStatus('loading');
     try {
@@ -546,9 +508,6 @@ export default function App() {
   };
 
   const stopLive = (pointerId?: number) => {
-    if (pointerId === undefined) { imageTouchesRef.current.clear(); imagePendingRef.current.clear(); }
-    else { imageTouchesRef.current.delete(pointerId); imagePendingRef.current.delete(pointerId); }
-    music.releaseImageTouch(pointerId);
     if (pointerId !== undefined) {
       liveTouchesRef.current.delete(pointerId);
       return; // One-shot samples and photo gestures finish after release.
@@ -741,7 +700,7 @@ export default function App() {
       }
       stopLive(); music.stopSamples(); setLoopPads([]);
       historyRef.current.clear(); syncHistory();
-      setMode('touch'); modeRef.current = 'touch'; setSheet(null);
+      setMode('place'); modeRef.current = 'place'; setSheet(null);
       placementsRef.current = []; setPlacements([]); music.stop(.12);
       setHasImage(true);
       URL.revokeObjectURL(url);
@@ -753,7 +712,7 @@ export default function App() {
     <header className="topbar">
       <div><div className="eyebrow">IMAGE / MUSIC</div><h1>Tap your photo to make music</h1></div>
       <div className="headerActions">
-      <button className="recordButton shuffleButton" disabled={!hasImage || shuffling || mode !== 'place'} aria-busy={shuffling} aria-label="Shuffle the photo loop" title="Create another loop from this photo. Undo to go back." onClick={() => shufflePhotoLoop()}>
+      <button className="recordButton shuffleButton" disabled={!hasImage || shuffling} aria-busy={shuffling} aria-label="Shuffle the photo loop" title="Create another loop from this photo. Undo to go back." onClick={() => shufflePhotoLoop()}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h3c5 0 7 12 12 12h3m-4-4 4 4-4 4M3 18h3c2 0 4-3 6-6s4-6 6-6h3m-4-4 4 4-4 4" /></svg><span className="shuffleLabel">Shuffle</span>
       </button>
       <button className={`recordButton ${recording ? 'recording' : ''}`} disabled={!hasImage} onClick={() => { if (recording) stopRecording(); else void startRecording(); }} aria-pressed={recording}><span aria-hidden="true">{recording ? '■' : '●'}</span> {recording ? 'Stop' : 'Record'}</button>
@@ -763,26 +722,21 @@ export default function App() {
       </div>
     </header>
     {audioPaused && <div className="recordMessage" role="status"><span>Audio paused</span><button onClick={() => void resumePlayback()}>Resume sound ▶</button></div>}
-    {hasImage && <div className="recordMessage"><span>{mode === 'touch' ? touchLabel : mode === 'live' ? 'Dusk · harmonized sample pads' : imageStyle}</span><span>{mode === 'live' ? (kitStatus === 'ready' ? (sampleTrigger === 'loop' ? 'Loop · tap again to stop' : 'One-shot · tap or swipe') : kitStatus === 'error' ? 'Kit failed · tap Play live to retry' : 'Loading samples…') : mode === 'touch' ? 'Live color instrument' : `${controls.tempo} BPM`}</span></div>}
+    {hasImage && <div className="recordMessage"><span>{mode === 'live' ? 'Dusk · harmonized sample pads' : imageStyle}</span><span>{mode === 'live' ? (kitStatus === 'ready' ? (sampleTrigger === 'loop' ? 'Loop · tap again to stop' : 'One-shot · tap or swipe') : kitStatus === 'error' ? 'Kit failed · tap Sample pads to retry' : 'Loading samples…') : `${controls.tempo} BPM`}</span></div>}
     {recordError && <div className="recordMessage" role="alert">{recordError}</div>}
     {recordingUrl && <div className="recordMessage"><a href={recordingUrl} download={`image-music.${recordingType.includes('mp4') ? 'mp4' : 'webm'}`}>↓ Save recording</a><button onClick={() => { URL.revokeObjectURL(recordingUrl); setRecordingUrl(null); }}>Dismiss</button></div>}
 
     <div className="instrument composer">
       <section className={`stage ${hasImage ? 'hasImage' : ''}`}>
 
-        {!hasImage && <label className="emptyState"><div className="orb"><span>＋</span></div><strong>Choose a photo</strong><span>Play its colors. Hold a note, drag to explore.</span><b className="emptyCta">Choose a photo ↗</b>
+        {!hasImage && <label className="emptyState"><div className="orb"><span>＋</span></div><strong>Choose a photo</strong><span>Place instruments onto its colors and textures.</span><b className="emptyCta">Choose a photo ↗</b>
           <input type="file" accept="image/*" onClick={() => { void music.unlock().catch(() => {}); }} onChange={(e) => upload(e.target.files?.[0])} /></label>}
-        <canvas ref={canvasRef} draggable={false} className={`canvas placementCanvas ${mode !== 'place' ? 'liveCanvas' : ''}`}
+        <canvas ref={canvasRef} draggable={false} className={`canvas placementCanvas ${mode === 'live' ? 'liveCanvas' : ''}`}
           onContextMenu={e => e.preventDefault()}
           onDragStart={e => e.preventDefault()}
           onPointerDown={(e) => {
             e.preventDefault();
             void music.unlock();
-            if (mode === 'touch') {
-              e.currentTarget.setPointerCapture(e.pointerId);
-              playImageAt(e.clientX, e.clientY, e.pointerId, true);
-              return;
-            }
             if (mode === 'live') {
               e.currentTarget.setPointerCapture(e.pointerId);
               void playLiveAt(e.clientX, e.clientY, e.pointerId);
@@ -806,10 +760,6 @@ export default function App() {
             } else pointerStartRef.current = { x: e.clientX, y: e.clientY };
           }}
           onPointerMove={(e) => {
-            if (mode === 'touch') {
-              if (e.currentTarget.hasPointerCapture(e.pointerId)) playImageAt(e.clientX, e.clientY, e.pointerId);
-              return;
-            }
             if (mode === 'live') {
               if (e.currentTarget.hasPointerCapture(e.pointerId)) playLiveAt(e.clientX, e.clientY, e.pointerId);
               return;
@@ -826,7 +776,7 @@ export default function App() {
             setPlacements(next);
           }}
           onPointerUp={(e) => {
-            if (mode !== 'place') { stopLive(e.pointerId); return; }
+            if (mode === 'live') { stopLive(e.pointerId); return; }
             const drag = dragRef.current;
             if (drag) {
               dragRef.current = null;
@@ -852,24 +802,19 @@ export default function App() {
             pointerStartRef.current = null;
             if (start && Math.hypot(e.clientX - start.x, e.clientY - start.y) < 12) void placeAt(e.clientX, e.clientY);
           }}
-          onLostPointerCapture={e => { if (mode !== 'place') stopLive(e.pointerId); }}
+          onLostPointerCapture={e => { if (mode === 'live') stopLive(e.pointerId); }}
           onPointerCancel={(e) => {
-            if (mode !== 'place') stopLive(e.pointerId);
+            if (mode === 'live') stopLive(e.pointerId);
             const drag = dragRef.current;
             dragRef.current = null; pointerStartRef.current = null;
             if (drag) updatePlacements(drag.before, 0.12, false);
           }}
-          onPointerLeave={(e) => { if (mode !== 'place' && e.pointerType === 'mouse' && !e.currentTarget.hasPointerCapture(e.pointerId)) stopLive(e.pointerId); }} />
-        {hasImage && mode === 'touch' && <div className="hint">Tap · hold · drag · play chords with multiple fingers</div>}
+          onPointerLeave={(e) => { if (mode === 'live' && e.pointerType === 'mouse') stopLive(e.pointerId); }} />
         {hasImage && mode === 'place' && !placements.length && <div className="hint">Choose an instrument, set its size, then tap the photo</div>}
       </section>
     </div>
     <section className="performanceBar" aria-label="Common controls">
       <div className="modePicker">
-        <button aria-pressed={mode === 'touch'} className={mode === 'touch' ? 'selected' : ''} onClick={() => {
-          stopLive(); stopBeat(); music.stopSamples(); setLoopPads([]); updatePlacements([], .12, true);
-          setSheet(null); setMode('touch'); modeRef.current = 'touch';
-        }}>Play image</button>
         <button aria-pressed={mode === 'place'} className={mode === 'place' ? 'selected' : ''} onClick={() => { stopLive(); setSheet(null); setMode('place'); modeRef.current = 'place'; void resumePlayback(); }}>Place loops</button>
         <button aria-pressed={mode === 'live'} className={mode === 'live' ? 'selected' : ''} onClick={() => { stopLive(); setSheet(null); setMode('live'); modeRef.current = 'live'; void loadLiveKit(); void resumePlayback(); }}>Sample pads</button>
       </div>
@@ -879,21 +824,6 @@ export default function App() {
         <button disabled={!placements.length} onClick={() => { stopLive(); music.stopSamples(); setLoopPads([]); updatePlacements([], 0.9); }}>Clear</button>
       </div>}
     </section>
-    {mode === 'touch' && <section className="imageMusicControls" aria-label="Image instrument settings">
-      <label>Key<select value={imageSettings.key} onChange={e => setImageSettings(current => ({ ...current, key: Number(e.target.value) }))}>
-        {['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'].map((name, key) => <option key={key} value={key}>{name}</option>)}
-      </select></label>
-      <label>Scale<select value={imageSettings.scale} onChange={e => setImageSettings(current => ({ ...current, scale: e.target.value as ImageSettings['scale'] }))}>
-        {Object.keys(IMAGE_SCALES).map(scale => <option key={scale} value={scale}>{({ pentatonic: 'Major pentatonic', minorPentatonic: 'Minor pentatonic', major: 'Major', minor: 'Minor', dorian: 'Dorian', lydian: 'Lydian' })[scale as ImageSettings['scale']]}</option>)}
-      </select></label>
-      <label>Octave<select value={imageSettings.octave} onChange={e => setImageSettings(current => ({ ...current, octave: Number(e.target.value) }))}>
-        {[-1, 0, 1, 2].map(value => <option key={value} value={value}>{value > 0 ? '+' : ''}{value}</option>)}
-      </select></label>
-      <label>Range<select value={imageSettings.range} onChange={e => setImageSettings(current => ({ ...current, range: Number(e.target.value) }))}>
-        {[1, 2, 3].map(value => <option key={value} value={value}>{value} octave{value > 1 ? 's' : ''}</option>)}
-      </select></label>
-      <p>Color chooses the note. Brightness shapes tone. Saturation adds richness. Use multiple fingers for chords.</p>
-    </section>}
     <div className={`dockRegion ${sheet ? 'sheetExpanded' : ''}`}>
     <nav className="instrumentDock" aria-label={mode === 'live' ? 'Sample pads and mix' : 'Instruments, visuals, motion and mix'}>
       {mode === 'place' && INSTRUMENTS.map((instrument, index) => <button key={instrument.id}
@@ -919,6 +849,9 @@ export default function App() {
         onClick={() => void triggerPad(index)}>
         <span className="instrumentGlyph" aria-hidden="true">{PAD_KEYS[index].toUpperCase()}</span><span>{pad.name}</span>
       </button>)}
+      {mode === 'place' && <button className={`theoryButton ${sheet === 'theory' ? 'active' : ''}`} aria-controls="instrumentSheet" aria-expanded={sheet === 'theory'} onClick={() => openSheet('theory')}>
+        <span className="instrumentGlyph" aria-hidden="true">♫</span><span>Music</span>
+      </button>}
       <button className={`visualsButton ${sheet === 'visuals' ? 'active' : ''}`} aria-controls="instrumentSheet" aria-expanded={sheet === 'visuals'} onClick={() => openSheet('visuals')}>
         <span className="instrumentGlyph" aria-hidden="true">◈</span><span>Visuals</span>
       </button>
@@ -926,7 +859,7 @@ export default function App() {
         aria-controls="instrumentSheet" aria-expanded={sheet === 'motion'} onClick={() => openSheet('motion')}>
         <span className="instrumentGlyph" aria-hidden="true">∿</span><span>Motion</span>{motion !== 'off' && <i />}
       </button>}
-      <button className={`mixButton ${sheet === 'mix' ? 'active' : ''}`} aria-controls="instrumentSheet" aria-expanded={sheet === 'mix'} onClick={() => openSheet('mix')}><span className="instrumentGlyph" aria-hidden="true">☷</span><span>Mix</span><small>{mode === 'touch' ? 'Sound' : mode === 'place' ? controls.tempo : 'Dusk'}</small></button>
+      <button className={`mixButton ${sheet === 'mix' ? 'active' : ''}`} aria-controls="instrumentSheet" aria-expanded={sheet === 'mix'} onClick={() => openSheet('mix')}><span className="instrumentGlyph" aria-hidden="true">☷</span><span>Mix</span><small>{mode === 'place' ? controls.tempo : 'Dusk'}</small></button>
     </nav>
     <section id="instrumentSheet" className={`controlSheet ${sheet ? 'isOpen' : ''}`} inert={!sheet} aria-hidden={!sheet}
       aria-labelledby="sheetTitle">
@@ -935,7 +868,24 @@ export default function App() {
           onPointerDown={event => { sheetDragStart.current = event.clientY; event.currentTarget.setPointerCapture(event.pointerId); }}
           onPointerUp={event => { if (sheetDragStart.current !== null && event.clientY - sheetDragStart.current > 30) setSheet(null); sheetDragStart.current = null; }}
           onPointerCancel={() => { sheetDragStart.current = null; }}><span /></button>
-        <header className="sheetHeader"><div><h2 id="sheetTitle">{sheet === 'mix' ? 'The mix' : sheet === 'motion' ? 'Motion' : sheet === 'visuals' ? 'Visuals' : INSTRUMENTS.find(i => i.id === sheet)?.label}</h2></div><button onClick={() => setSheet(null)} aria-label="Close controls">✕</button></header>
+        <header className="sheetHeader"><div><h2 id="sheetTitle">{sheet === 'theory' ? 'Music' : sheet === 'mix' ? 'The mix' : sheet === 'motion' ? 'Motion' : sheet === 'visuals' ? 'Visuals' : INSTRUMENTS.find(i => i.id === sheet)?.label}</h2></div><button onClick={() => setSheet(null)} aria-label="Close controls">✕</button></header>
+        {sheet === 'theory' && <div className="loopTheoryControls">
+          <p>Each circle develops a repeating phrase. Motion reshapes it every two bars while the ensemble stays in harmony.</p>
+          <label><span>Key</span><select value={loopTheory.key} onChange={event => setLoopTheory(current => ({ ...current, key: Number(event.target.value) }))}>
+            <option value={-1}>Auto · from photo</option>
+            {['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'].map((name, key) => <option key={key} value={key}>{name}</option>)}
+          </select></label>
+          <label><span>Scale</span><select value={loopTheory.scale} onChange={event => setLoopTheory(current => ({ ...current, scale: event.target.value as LoopTheory['scale'] }))}>
+            <option value="auto">Auto · from photo</option>
+            {Object.keys(LOOP_SCALES).map(scale => <option key={scale} value={scale}>{({ major: 'Major', minor: 'Minor', dorian: 'Dorian', lydian: 'Lydian', mixolydian: 'Mixolydian', harmonicMinor: 'Harmonic minor' })[scale as keyof typeof LOOP_SCALES]}</option>)}
+          </select></label>
+          <label><span>Octave</span><select value={loopTheory.octave} onChange={event => setLoopTheory(current => ({ ...current, octave: Number(event.target.value) }))}>
+            <option value={-1}>−1 · lower</option><option value={0}>0 · original</option><option value={1}>+1 · higher</option>
+          </select></label>
+          <label><span>Melodic range</span><select value={loopTheory.range} onChange={event => setLoopTheory(current => ({ ...current, range: Number(event.target.value) }))}>
+            <option value={1}>Narrow · 1 octave</option><option value={2}>Open · 2 octaves</option><option value={3}>Wide · 3 octaves</option>
+          </select><small>Shapes the next phrase. Key, scale and octave apply on the next notes.</small></label>
+        </div>}
         {sheet === 'visuals' && <div className="visualChoices">
           <div className="visualModeList" role="group" aria-label="Visual styles · scroll for more">
           {VISUAL_MODES.map(visual => <button key={visual.id} aria-pressed={visualMode === visual.id}
@@ -954,7 +904,7 @@ export default function App() {
             changeMotion(value);
           }}>{value === 'off' ? 'Off' : value === 'breathe' ? 'Breathe' : 'Sway'}</button>)}
       </div>
-      <small>{motion === 'sway' ? 'Drift across colors · sound follows' : motion === 'breathe' ? 'Gently expand and settle' : 'Keep circles still'}</small>
+      <small>{motion === 'sway' ? 'Drift across colors · phrases develop every two bars' : motion === 'breathe' ? 'Gently expand and settle' : 'Keep circles still'}</small>
       <label className="sizeControl"><span>Amount <output>{motionAmount}%</output></span>
         <Slider max={300} value={motionAmount} onChange={value => changeMotion(motionRef.current, value / 100)} /></label>
     </div>}
@@ -992,7 +942,7 @@ export default function App() {
           </button>
         </div>}
         {sheet === 'mix' && <div className="liveMixControls">
-          <label><span>{mode === 'touch' ? 'Image volume' : 'Placed instruments'} <output>{controls.placedLevel}%</output></span><Slider value={controls.placedLevel} onChange={value => setControl('placedLevel', value)} /></label>
+          <label><span>Placed instruments <output>{controls.placedLevel}%</output></span><Slider value={controls.placedLevel} onChange={value => setControl('placedLevel', value)} /></label>
           <label><span>Live samples <output>{controls.sampleLevel}%</output></span><Slider value={controls.sampleLevel} onChange={value => setControl('sampleLevel', value)} /></label>
         </div>}
         {sheet === 'mix' && mode === 'place' && <div className="instrumentModule globalModule"><strong>Composition</strong>
@@ -1000,7 +950,7 @@ export default function App() {
             <Slider min={55} max={160} value={controls.tempo} onChange={(value) => setControl('tempo', value)} /></label>
           <label><span>Pitch <output>{controls.pitch > 0 ? '+' : ''}{controls.pitch} st</output></span><small>Transposes the complete arrangement.</small>
             <Slider min={-12} max={12} value={controls.pitch} onChange={(value) => setControl('pitch', value)} /></label>
-          <label><span>Variation <output>{controls.complexity}%</output></span><small>Moves from spacious patterns to busier phrases.</small>
+          <label><span>Variation <output>{controls.complexity}%</output></span><small>Adds detail to each motif while keeping its rhythm recognizable.</small>
             <Slider value={controls.complexity} onChange={(value) => setControl('complexity', value)} /></label>
           <label><span>Space <output>{controls.space}%</output></span><small>Adds echo and atmospheric depth.</small>
             <Slider value={controls.space} onChange={(value) => setControl('space', value)} /></label></div>}

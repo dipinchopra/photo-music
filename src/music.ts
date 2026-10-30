@@ -1,4 +1,4 @@
-import { composeImage, circleEvent, phraseStep, randomAt, scaleNote, arpeggioDegree, type ArpMode, type Composition, imageNote, DEFAULT_IMAGE_SETTINGS, type ImageSettings } from './composition';
+import { composeImage, composeCircleLoop, developLoopTone, loopMelodyDegree, applyLoopTheory, DEFAULT_LOOP_THEORY, type LoopTheory, type LoopScore, randomAt, scaleNote, arpeggioDegree, type ArpMode, type Composition } from './composition';
 import { SampleBank, PHOTO_PADS } from './pads';
 import { sampleHarmony, sampleDrumStep } from './harmony';
 
@@ -65,60 +65,28 @@ function hz(semitones: number) {
 type TimbreBinding = { filter: BiquadFilterNode; colourGain: GainNode; cutoff: number; tone: ImageTone };
 
 export class ChordEngine {
-  private imageSettings: ImageSettings = { ...DEFAULT_IMAGE_SETTINGS };
-  private imageVoices = new Map<number, { oscillators: OscillatorNode[]; gain: GainNode; filter: BiquadFilterNode;
-    harmonic: GainNode; midi: number; release: number; tone: ImageTone }>();
+  private theory: LoopTheory = { ...DEFAULT_LOOP_THEORY };
+  private loopPhrases = new Map<number, { anchor: ImageTone; tone: ImageTone; score: LoopScore; boundary: number;
+    lane: number; previous?: number }>();
 
-  configureImage(settings: ImageSettings) {
-    this.imageSettings = { ...settings };
-    this.imageVoices.forEach((voice, id) => this.updateImageTouch(id, voice.tone));
-  }
+  setLoopTheory(theory: LoopTheory) { this.theory = { ...theory }; }
 
-  async startImageTouch(id: number, tone: ImageTone, valid: () => boolean = () => true) {
-    await this.unlock();
-    if (!valid() || !this.context || !this.running) return;
-    this.releaseImageTouch(id);
-    if (this.imageVoices.size >= 8) this.releaseImageTouch(this.imageVoices.keys().next().value!);
-    const note = imageNote(tone, this.imageSettings);
-    const now = this.context.currentTime;
-    const fundamental = this.context.createOscillator(), overtone = this.context.createOscillator();
-    const harmonic = this.context.createGain(), filter = this.context.createBiquadFilter(), gain = this.context.createGain();
-    fundamental.type = 'triangle'; overtone.type = 'sawtooth';
-    const frequency = 440 * Math.pow(2, (note.midi - 69) / 12);
-    fundamental.frequency.value = frequency; overtone.frequency.value = frequency * 2;
-    harmonic.gain.value = note.richness * 0.22;
-    filter.type = 'lowpass'; filter.frequency.value = note.cutoff;
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(0.11, now + note.attack);
-    fundamental.connect(filter); overtone.connect(harmonic); harmonic.connect(filter);
-    filter.connect(gain); gain.connect(this.placedMix.get('keys')!);
-    this.imageVoices.set(id, { oscillators: [fundamental, overtone], gain, filter, harmonic,
-      midi: note.midi, release: note.release, tone });
-    fundamental.start(now); overtone.start(now);
-    fundamental.onended = () => { fundamental.disconnect(); overtone.disconnect(); harmonic.disconnect(); filter.disconnect(); gain.disconnect(); };
-  }
-
-  updateImageTouch(id: number, tone: ImageTone) {
-    const voice = this.imageVoices.get(id);
-    if (!voice || !this.context) return;
-    const note = imageNote(tone, this.imageSettings, voice.midi), now = this.context.currentTime;
-    const frequency = 440 * Math.pow(2, (note.midi - 69) / 12);
-    voice.oscillators.forEach((osc, index) => osc.frequency.setTargetAtTime(frequency * (index + 1), now, 0.018));
-    voice.filter.frequency.setTargetAtTime(note.cutoff, now, 0.035);
-    voice.harmonic.gain.setTargetAtTime(note.richness * 0.22, now, 0.035);
-    voice.midi = note.midi; voice.release = note.release; voice.tone = tone;
-  }
-
-  releaseImageTouch(id?: number) {
-    if (id === undefined) { [...this.imageVoices.keys()].forEach(key => this.releaseImageTouch(key)); return; }
-    const voice = this.imageVoices.get(id);
-    if (!voice || !this.context) return;
-    this.imageVoices.delete(id);
-    const now = this.context.currentTime;
-    if (typeof voice.gain.gain.cancelAndHoldAtTime === 'function') voice.gain.gain.cancelAndHoldAtTime(now);
-    else { voice.gain.gain.cancelScheduledValues(now); voice.gain.gain.setValueAtTime(Math.max(0.0001, voice.gain.gain.value), now); }
-    voice.gain.gain.exponentialRampToValueAtTime(0.0001, now + voice.release);
-    voice.oscillators.forEach(osc => { try { osc.stop(now + voice.release + 0.02); } catch {} });
+  private circlePhrase(placement: Placement, response: boolean) {
+    const boundary = Math.floor(this.step / 16);
+    let phrase = this.loopPhrases.get(placement.id);
+    if (!phrase) {
+      const tone = structuredClone(placement.tone);
+      const lane = placement.id - 1;
+      phrase = { anchor: tone, tone, boundary, lane,
+        score: composeCircleLoop(this.composition, tone, lane, placement.radius, this.controls.complexity, response, this.theory.range) };
+      this.loopPhrases.set(placement.id, phrase);
+    } else if (phrase.boundary !== boundary) {
+      phrase.tone = developLoopTone(phrase.tone, placement.tone);
+      phrase.boundary = boundary;
+      phrase.score = composeCircleLoop(this.composition, phrase.tone, phrase.lane, placement.radius,
+        this.controls.complexity, response, this.theory.range, phrase.anchor);
+    }
+    return { phrase, event: phrase.score.notes[this.step % 64] };
   }
 
   private context: AudioContext | null = null;
@@ -234,7 +202,7 @@ export class ChordEngine {
     const buffer = this.samples.get(index);
     if (!buffer || !this.context || !this.output) return false;
     const step = this.harmonyStepAt(now);
-    const plan = sampleHarmony(this.composition, step, index, this.controls.transpose);
+    const plan = sampleHarmony(applyLoopTheory(this.composition, this.theory), step, index, this.controls.transpose + this.theory.octave * 12);
     plan.forEach((note, voiceIndex) => {
       let offset = 0;
       for (let i = 0; i < note.offsetBeats * 2; i++) {
@@ -343,7 +311,7 @@ export class ChordEngine {
       this.nextStepTime += this.stepDuration(this.controls.tempo) / 1000;
     }
   }
-  private keyHistory = new Map<number, { pitch: number; step: number }>();
+  private keyHistory = new Map<number, { step: number }>();
   private composition: Composition = composeImage([]);
   private variation = 0.5;
   onPlacementHit: ((id: number) => void) | null = null;
@@ -374,11 +342,12 @@ export class ChordEngine {
     keys: 0.78, keysTone: 0.62, keysSustain: 0.55, keysDelay: 0, keysArp: 'off', keysArpRate: 2,
     guitar: 0.7, guitarTone: 0.58, guitarStrum: 0.5, guitarDelay: 0, guitarArp: 'off', guitarArpRate: 2,
     bass: 0.68, bassDepth: 0.7, bassMovement: 0.45, bassDelay: 0,
-    drums: 0.6, drumPunch: 0.7, drumDensity: 0.5, drumDelay: 0, fourOnFloor: true,
+    drums: 0.6, drumPunch: 0.7, drumDensity: 0.5, drumDelay: 0, fourOnFloor: false,
   };
 
   setComposition(composition: Composition, preserveTransport = false) {
     this.composition = composition;
+    this.loopPhrases.clear();
     this.variation = randomAt(composition.seed, 3);
     if (!preserveTransport) {
       this.step = 0;
@@ -482,6 +451,7 @@ export class ChordEngine {
   updatePlacements(placements: Placement[]) {
     this.placements = placements;
     const ids = new Set(placements.map(placement => placement.id));
+    this.loopPhrases.forEach((_, id) => { if (!ids.has(id)) this.loopPhrases.delete(id); });
     this.keyHistory.forEach((_, id) => { if (!ids.has(id)) this.keyHistory.delete(id); });
     if (this.context) placements.forEach(placement => {
       this.timbreBindings.get(placement.id)?.forEach(binding => {
@@ -652,12 +622,12 @@ export class ChordEngine {
     if (this.transportFrames.length > 128) this.transportFrames.shift();
     this.soundingPlacement = null;
     const hits = new Set<Instrument>();
-    const composition = this.composition;
+    const composition = applyLoopTheory(this.composition, this.theory);
     const bar = Math.floor(this.step / 8);
     const root = composition.progression[bar % composition.progression.length];
     const beat = this.step % 8;
     const noteAt = (degree: number, register: number) =>
-      hz(scaleNote(composition, degree) + this.controls.transpose + register);
+      hz(scaleNote(composition, degree) + this.controls.transpose + this.theory.octave * 12 + register);
     this.sampleLoops.forEach((loop, index) => {
       const active = PHOTO_PADS[index].instrument === 'drums'
         ? sampleDrumStep(index, this.step, this.controls.fourOnFloor, this.controls.drumDensity)
@@ -684,56 +654,55 @@ export class ChordEngine {
     // Rotating priority keeps additional circles audible without a unison pile-up.
     let keyAttacks = 0;
     for (let voice = 0; voice < keys.length; voice++) {
-      const lane = (voice + Math.floor(this.step / 2)) % keys.length;
+      const lane = (voice + Math.floor(this.step / 2) + Math.floor(this.step / 16)) % keys.length;
       const placement = keys[lane];
       this.soundingPlacement = placement;
-      const melody = circleEvent(composition, placement.tone, this.step, this.controls.complexity, lane, placement.radius);
+      const { phrase: motif, event: melody } = this.circlePhrase(placement, lane % 2 === 1);
       const previous = this.keyHistory.get(placement.id);
       const arpeggiating = this.controls.keysArp !== 'off';
       const active = arpeggiating ? this.step % this.controls.keysArpRate === 0 : melody.active;
       if (!active || !this.controls.keys || keyAttacks >= 2 || (!arpeggiating && previous && this.step - previous.step < 2)) continue;
-      const phrase = phraseStep(composition, placement.tone, this.step, this.controls.complexity);
       const degree = arpeggiating
         ? arpeggioDegree(root, this.step, this.controls.keysArp, this.controls.keysArpRate, Math.floor(placement.tone.hue / 90) + lane)
-        : root + [0, 2, 4, 6][Math.abs(phrase.degree) % 4];
-      const register = placement.tone.brightness > 0.68 ? 36 : 24;
-      const pitch = scaleNote(composition, degree) + this.controls.transpose + register;
-      if (!arpeggiating && previous?.pitch === pitch && this.step - previous.step < 4) continue;
+        : loopMelodyDegree(root, melody, this.step, motif.previous, this.theory.range);
+      motif.previous = degree;
+      const register = motif.tone.brightness > 0.68 ? 36 : 24;
+      const pitch = scaleNote(composition, degree) + this.controls.transpose + this.theory.octave * 12 + register;
       hits.add('keys');
       this.placementHit(placement.id);
-      this.keyHistory.set(placement.id, { pitch, step: this.step });
+      this.keyHistory.set(placement.id, { step: this.step });
       keyAttacks++;
       const secondsPerStep = 60 / this.controls.tempo / 2;
       const duration = arpeggiating ? secondsPerStep * this.controls.keysArpRate * (0.5 + this.controls.keysSustain * 0.35)
         : Math.max(0.35, melody.hold * secondsPerStep * (0.7 + this.controls.keysSustain * 0.4));
       this.voice(hz(pitch), 0.085 * placement.level * melody.accent / Math.sqrt(Math.min(keys.length, 3)),
-        duration, this.controls.keysTone * 0.55 + placement.tone.saturation * 0.45,
+        duration, this.controls.keysTone * .25 + placement.tone.saturation * .3 + placement.tone.brightness * .45,
         0.02 + (1 - this.controls.keysTone) * 0.04, this.controls.keysDelay * 0.55);
     }
 
     let guitarAttacks = 0;
     for (let voice = 0; voice < guitars.length; voice++) {
-      const lane = (voice + Math.floor(this.step / 2)) % guitars.length;
+      const lane = (voice + Math.floor(this.step / 2) + Math.floor(this.step / 16)) % guitars.length;
       const placement = guitars[lane];
       this.soundingPlacement = placement;
-      const event = circleEvent(composition, placement.tone, this.step, this.controls.complexity, lane, placement.radius);
+      const { phrase: motif, event } = this.circlePhrase(placement, keys.length > 0 ? lane % 2 === 0 : lane % 2 === 1);
       const arpeggiating = this.controls.guitarArp !== 'off';
       const active = arpeggiating ? this.step % this.controls.guitarArpRate === 0 : event.active;
       if (!this.controls.guitar || !active || guitarAttacks >= 2) continue;
       guitarAttacks++;
-      const phrase = phraseStep(composition, placement.tone, this.step + 3, this.controls.complexity);
       hits.add('guitar');
       this.placementHit(placement.id);
-      const base = root + (Math.abs(phrase.degree) % 3) * 2;
+      const base = loopMelodyDegree(root, event, this.step, motif.previous, this.theory.range);
+      motif.previous = base;
       const degrees = arpeggiating
         ? [arpeggioDegree(root, this.step, this.controls.guitarArp, this.controls.guitarArpRate, Math.floor(placement.tone.hue / 90) + lane)]
-        : placement.radius > 65 ? [base, base + 2, base + 4] : [base];
+        : placement.radius > 65 && beat % 4 === 0 ? [base, base + 2] : [base];
       degrees.forEach((degree, index) => {
         const volume = 0.065 * placement.level * event.accent / Math.sqrt(Math.min(guitars.length, 3) * degrees.length);
         const duration = arpeggiating ? 30 / this.controls.tempo * this.controls.guitarArpRate * 0.75
-          : 0.28 + this.controls.guitarStrum * 0.4;
+          : Math.max(.22, event.hold * 30 / this.controls.tempo * (.55 + this.controls.guitarStrum * .4));
         this.voice(noteAt(degree, 24), volume, duration,
-          this.controls.guitarTone * 0.55 + placement.tone.saturation * 0.45,
+          this.controls.guitarTone * .25 + placement.tone.saturation * .3 + placement.tone.brightness * .45,
           0.006 + index * 0.014, this.controls.guitarDelay, true);
       });
     }
@@ -743,6 +712,7 @@ export class ChordEngine {
       const lane = (voice + Math.floor(this.step / 2)) % bass.length;
       const placement = bass[lane];
       this.soundingPlacement = placement;
+      const { phrase: motif } = this.circlePhrase(placement, false);
       const bassBeat = beat === 0 || beat === 4 || (this.controls.bassMovement > 0.32 && this.controls.complexity > 0.25 && (beat === 2 || beat === 6))
         || (this.controls.bassMovement > 0.75 && beat === 7 && bar % 4 === 3);
       if (!this.controls.bass || !bassBeat || bassAttacks >= 1) continue;
@@ -750,9 +720,9 @@ export class ChordEngine {
       hits.add('bass');
       this.placementHit(placement.id);
       const nextRoot = composition.progression[(bar + 1) % composition.progression.length];
-      const contour = placement.tone.profile?.contour;
-      const localLight = contour?.length ? contour[Math.floor(this.step / 2) % contour.length] : placement.tone.brightness;
-      const colorDegree = [0, 2, 4][Math.min(2, Math.floor((placement.tone.hue / 360 * 0.4 + localLight * 0.6) * 3))];
+      const contour = motif.tone.profile?.contour;
+      const localLight = contour?.length ? contour[Math.floor(this.step / 2) % contour.length] : motif.tone.brightness;
+      const colorDegree = [0, 2, 4][Math.min(2, Math.floor((motif.tone.hue / 360 * 0.4 + localLight * 0.6) * 3))];
       const degree = beat === 7 && this.controls.bassMovement > 0.58 ? nextRoot - 1
         : root + (beat === 0 && lane === 0 ? 0 : colorDegree);
       const register = this.controls.bassDepth > 0.66 ? 0 : 12;
@@ -763,12 +733,13 @@ export class ChordEngine {
 
     drums.forEach((placement) => {
       this.soundingPlacement = placement;
-      const variation = Math.floor(randomAt(composition.seed, Math.floor(placement.tone.hue) + 70) * 3);
+      const { phrase: motif } = this.circlePhrase(placement, false);
+      const variation = Math.floor(randomAt(composition.seed, Math.floor(motif.tone.hue / 30) + 70) * 3);
       const fill = bar % 4 === 3 && beat >= 6 && this.controls.complexity > 0.45;
-      const detail = placement.tone.profile?.activity;
+      const detail = motif.tone.profile?.activity;
       const localAccent = detail?.length ? 0.65 + detail[beat % detail.length] * 0.35 : 1;
       const volume = placement.level * localAccent / Math.sqrt(Math.max(1, drums.length));
-      const brightness = placement.tone.brightness;
+      const brightness = motif.tone.brightness;
 
       if (brightness < 0.34) {
         const kickPatterns = composition.style === 'ambient' ? [[0], [0, 6], [0, 4]]
@@ -796,7 +767,7 @@ export class ChordEngine {
         const dense = variation === 0 ? [0, 1, 2, 3, 4, 5, 6, 7]
           : variation === 1 ? [0, 1, 3, 4, 5, 7] : [1, 2, 3, 5, 6, 7];
         const pattern = placement.tone.texture * 0.35 + this.controls.drumDensity * 0.3 + composition.energy * 0.25 + this.controls.complexity * 0.35 > 0.58 ? dense : sparse;
-        if (pattern.includes(beat)) {
+        if (pattern.includes(beat) || (this.controls.complexity > .55 && (detail?.[beat] ?? 0) > .65 && beat < 7)) {
           hits.add('drums');
           this.placementHit(placement.id);
           const open = placement.tone.texture > 0.62 && beat === 7;
@@ -811,8 +782,8 @@ export class ChordEngine {
   }
 
   stop(release = 0.12, preserveSampleLoops = false) {
-    this.releaseImageTouch();
     this.cancelShuffle(); this.placedVoices.clear();
+    this.loopPhrases.clear();
     this.transportFrames = [];
     if (preserveSampleLoops) this.sampleLoops.forEach(loop => { loop.startStep = this.step; });
     else this.sampleLoops.clear();

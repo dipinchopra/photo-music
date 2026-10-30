@@ -57,63 +57,8 @@ export function composeImage(cells: ImageTone[]): Composition {
 }
 
 export function scaleNote(composition: Composition, degree: number) {
-  const octave = Math.floor(degree / composition.scale.length);
-  return composition.tonic + composition.scale[((degree % composition.scale.length) + composition.scale.length) % composition.scale.length] + octave * 12;
-}
-
-/** A repeatable two-bar motif, with a response and a turnaround every four bars. */
-export function phraseStep(composition: Composition, tone: ImageTone, step: number, complexity: number) {
-  const seed = composition.seed ^ Math.round(tone.hue * 127 + tone.brightness * 8191 + tone.texture * 4093);
-  const bar = Math.floor(step / 8);
-  const beat = step % 8;
-  const slot = step % 16;
-  const density = (composition.style === 'ambient' ? 0.07 : composition.style === 'pulse' ? 0.4 : 0.2) + complexity * 0.24 + tone.texture * 0.18 + composition.energy * 0.12;
-  const active = beat === 0 || (composition.style === 'ambient' && beat % 2 === 1 ? false : randomAt(seed, slot) < density);
-  const contour = [0, 1, 2, 1, -1, 0, 2, -1];
-  const start = Math.floor(tone.hue / 360 * 7);
-  const imageContour = tone.profile?.contour;
-  const region = imageContour?.length ? imageContour[(Math.floor(step / 2) + bar % 2) % imageContour.length] : undefined;
-  const motion = region === undefined ? contour[(slot + Math.floor(randomAt(seed, 20) * 8)) % 8]
-    : Math.round((region - 0.5) * 6);
-  const response = bar % 4 === 2 ? 1 : bar % 4 === 3 ? -1 : 0;
-  const degree = start + motion * (tone.saturation > 0.55 ? 2 : 1) + response;
-  return { active, degree, accent: beat % 2 === 0 ? 1 : 0.65 + randomAt(seed, slot + 40) * 0.2 };
-}
-
-// Moderate phrases with room at the end; individual circles offset this rhythm.
-export function melodyEvent(composition: Composition, step: number, complexity: number) {
-  const phrase = Math.floor(step / 32);
-  const slot = step % 32;
-  const ambient = composition.style === 'ambient';
-  const anchors = ambient ? [0, 16] : [0, 8, 16, 24];
-  const candidates = ambient ? [4, 8, 12, 20, 24] : [2, 4, 6, 10, 12, 14, 18, 20, 22, 26];
-  // Rank shared beat slots using the photo's edge/texture distribution.
-  // Density adds detail to the same phrase, rather than switching patterns.
-  const ranked = [...candidates].sort((a, b) => {
-    const score = (beat: number) => (composition.rhythm?.[Math.floor(beat / 2) % (composition.rhythm?.length || 1)] ?? 0)
-      + randomAt(composition.seed, beat + Math.floor(phrase / 2) * 32 + 120) * 0.35;
-    return score(b) - score(a);
-  });
-  const count = Math.round(Math.max(0, Math.min(1, complexity)) * candidates.length);
-  const onsets = [...anchors, ...ranked.slice(0, count)].sort((a, b) => a - b);
-  const index = onsets.indexOf(slot);
-  const next = index >= 0 ? onsets[index + 1] ?? 29 : slot;
-  return {
-    active: index >= 0,
-    voice: phrase * 5 + Math.max(0, index),
-    hold: Math.max(1, Math.min(6, next - slot - 1)),
-    accent: index === 0 ? 0.82 : index === onsets.length - 1 ? 0.58 : 0.66,
-  };
-}
-
-
-/** Each placed circle gets a stable musical lane, even on similar colors. */
-export function circleEvent(composition: Composition, _tone: ImageTone, step: number, complexity: number, lane: number, radius = 50) {
-  // Color shapes pitch and timbre, while all parts share the same rhythmic motif.
-  // Whole-beat lane offsets preserve that groove as circles are added or moved.
-  const offset = lane * 2 % 8;
-  const size = Math.max(0, Math.min(1, (radius - 28) / 62));
-  return melodyEvent(composition, step + offset, Math.min(1, complexity * (0.55 + size * 0.9)));
+  const octave = Math.floor(degree / 7);
+  return composition.tonic + composition.scale[((degree % 7) + 7) % 7] + octave * 12;
 }
 
 export type ArpMode = 'off' | 'up' | 'down' | 'upDown';
@@ -132,17 +77,17 @@ export function arrangePhotoMusic(cells: ImageTone[], variation: number) {
   const seed = base.seed ^ Math.imul(variation + 1, 0x85ebca6b);
   const pick = (index: number) => randomAt(seed, index);
   const palette = (Math.floor(randomAt(base.seed, 91) * 4) + variation) % 4;
-  const progressions = [[0, 5, 3, 4], [0, 3, 5, 4], [0, 4, 5, 3], [0, 2, 5, 3]];
-  const keysArp: ArpMode = ['off', 'up', 'down', 'upDown'][palette] as ArpMode;
+
+  const keysArp: ArpMode = 'off';
   const composition: Composition = {
     ...base, seed, tonic: (base.tonic + [0, 5, 7, 2][variation % 4]) % 12,
-    progression: progressions[(palette + Math.floor(pick(2) * 4)) % 4],
+    progression: base.progression.map((degree, index) => index === 0 ? 0 : (degree + [0, 2, 3, 0][variation % 4]) % 7),
     // Preserve the transport groove during the fade; variation comes from notes and roles.
     rhythm: base.rhythm?.map((value, index) => Math.min(1, value * .6 + pick(100 + index) * .4)),
   };
   return {
     composition,
-    arps: { keys: keysArp, guitar: (palette === 0 ? 'upDown' : 'off') as ArpMode,
+    arps: { keys: keysArp, guitar: 'off' as ArpMode,
       keysRate: palette === 3 ? 1 : 2, guitarRate: 2 },
     controls: {
       pitch: 0, complexity: 24 + Math.round(pick(3) * 18),
@@ -154,35 +99,107 @@ export function arrangePhotoMusic(cells: ImageTone[], variation: number) {
   };
 }
 
-
-export const IMAGE_SCALES = {
-  pentatonic: [0, 2, 4, 7, 9],
-  minorPentatonic: [0, 3, 5, 7, 10],
+export const LOOP_SCALES = {
   major: [0, 2, 4, 5, 7, 9, 11],
   minor: [0, 2, 3, 5, 7, 8, 10],
   dorian: [0, 2, 3, 5, 7, 9, 10],
   lydian: [0, 2, 4, 6, 7, 9, 11],
+  mixolydian: [0, 2, 4, 5, 7, 9, 10],
+  harmonicMinor: [0, 2, 3, 5, 7, 8, 11],
 } as const;
-export type ImageSettings = { key: number; scale: keyof typeof IMAGE_SCALES; octave: number; range: number };
-export const DEFAULT_IMAGE_SETTINGS: ImageSettings = { key: 0, scale: 'pentatonic', octave: 0, range: 2 };
+export type LoopTheory = { key: number; scale: 'auto' | keyof typeof LOOP_SCALES; octave: number; range: number };
+export const DEFAULT_LOOP_THEORY: LoopTheory = { key: -1, scale: 'auto', octave: 0, range: 2 };
+export function applyLoopTheory(composition: Composition, theory: LoopTheory): Composition {
+  return { ...composition, tonic: theory.key < 0 ? composition.tonic : theory.key,
+    scale: theory.scale === 'auto' ? composition.scale : LOOP_SCALES[theory.scale] };
+}
 
-/** Local color chooses a note directly, independently of the transport/chords. */
-export function imageNote(tone: ImageTone, settings: ImageSettings, previousMidi?: number) {
-  const scale = IMAGE_SCALES[settings.scale];
-  const count = scale.length * settings.range;
-  // Hue has no useful meaning near gray; lightness provides a stable fallback.
-  const position = tone.saturation < 0.12 ? tone.brightness : ((tone.hue % 360) + 360) % 360 / 360;
-  const continuous = Math.max(0, Math.min(0.999999, position)) * count;
-  let degree = Math.floor(continuous);
-  const base = 48 + settings.key + settings.octave * 12;
-  // Hysteresis: keep the previous note slightly beyond its bin boundary.
-  if (previousMidi !== undefined) {
-    const previousDegree = Array.from({ length: count }, (_, i) => i)
-      .find(i => base + scale[i % scale.length] + Math.floor(i / scale.length) * 12 === previousMidi);
-    if (previousDegree !== undefined && continuous >= previousDegree - 0.18 && continuous < previousDegree + 1.18) degree = previousDegree;
+export type LoopNote = { active: boolean; degree: number; hold: number; accent: number };
+export type LoopScore = { notes: LoopNote[]; tone: ImageTone };
+const clampUnit = (value: number) => Math.max(0, Math.min(1, value));
+const profileAt = (values: readonly number[] | undefined, index: number, fallback: number) =>
+  values?.length ? values[((index % values.length) + values.length) % values.length] : fallback;
+
+/** Only a meaningful region change develops the motif; tiny motion keeps its identity. */
+export function developLoopTone(anchor: ImageTone, current: ImageTone): ImageTone {
+  const hueDelta = ((current.hue - anchor.hue + 540) % 360) - 180;
+  const distance = Math.abs(hueDelta) / 180 * Math.min(anchor.saturation, current.saturation)
+    + Math.abs(current.brightness - anchor.brightness) + Math.abs(current.texture - anchor.texture) * .4
+    + Array.from({ length: 8 }, (_, i) => Math.abs(profileAt(anchor.profile?.contour, i, anchor.brightness)
+      - profileAt(current.profile?.contour, i, current.brightness))).reduce((a, b) => a + b, 0) / 8;
+  if (distance < .12) return anchor;
+  const mix = (a: number, b: number) => a + (b - a) * .35;
+  return { hue: (anchor.hue + hueDelta * .35 + 360) % 360,
+    saturation: mix(anchor.saturation, current.saturation), brightness: mix(anchor.brightness, current.brightness),
+    texture: mix(anchor.texture, current.texture), profile: {
+      contour: Array.from({ length: 8 }, (_, i) => mix(profileAt(anchor.profile?.contour, i, anchor.brightness), profileAt(current.profile?.contour, i, current.brightness))),
+      activity: Array.from({ length: 8 }, (_, i) => mix(profileAt(anchor.profile?.activity, i, anchor.texture), profileAt(current.profile?.activity, i, current.texture))),
+    } };
+}
+
+/** Eight bars built from one two-bar idea: statement, repeat, answer, return. */
+export function composeCircleLoop(composition: Composition, tone: ImageTone, lane: number, radius: number,
+  complexity: number, response = false, range = 2, rhythmTone = tone): LoopScore {
+  const size = clampUnit((radius - 28) / 62);
+  // Rhythm identity comes from the placed region, not each moving pixel sample.
+  const seed = composition.seed ^ Math.imul(lane + 1, 0x45d9f3b)
+    ^ Math.round(rhythmTone.hue / 30) * 101 ^ Math.round(rhythmTone.texture * 6) * 313;
+  const density = clampUnit(complexity * (.55 + size * .7));
+  const start = response ? 8 : 0;
+  const score = (slot: number) => profileAt(rhythmTone.profile?.activity, Math.floor(slot / 2), rhythmTone.texture) * .65
+    + (composition.rhythm?.[Math.floor(slot / 2) % (composition.rhythm?.length || 1)] ?? .2) * .2
+    + randomAt(seed, slot + 70) * .3 + ((slot >= 8) === response ? .4 : 0);
+  const second = composition.style === 'ambient' ? start + 4
+    : [start + 3, start + 4, start + 5].sort((a, b) => score(b) - score(a))[0];
+  const anchors = [start, second];
+  const candidates = Array.from({ length: response ? 15 : 13 }, (_, i) => i)
+    .filter(slot => !anchors.includes(slot)).sort((a, b) => score(b) - score(a));
+  const count = Math.round(density * (composition.style === 'ambient' ? 2 : 4));
+  const onsets = [...anchors];
+  for (const slot of candidates) {
+    if (onsets.length >= anchors.length + count) break;
+    if (onsets.every(other => Math.abs(other - slot) >= 2)) onsets.push(slot);
   }
-  const midi = Math.max(24, Math.min(120, base + scale[degree % scale.length] + Math.floor(degree / scale.length) * 12));
-  return { midi, cutoff: 250 * Math.pow(40, tone.brightness),
-    richness: tone.saturation, attack: 0.012 + (1 - tone.texture) * 0.07,
-    release: 0.09 + (1 - tone.texture) * 0.4 };
+  onsets.sort((a, b) => a - b);
+  const center = Math.round((tone.saturation < .12 ? tone.brightness : tone.hue / 360) * 4) - 1;
+  const spread = 2 + clampUnit((range - 1) / 2) * 5;
+  let previous = center;
+  const motif = onsets.map((slot, i) => {
+    const light = profileAt(tone.profile?.contour, Math.floor(slot / 2),
+      clampUnit(tone.brightness + (randomAt(seed, i + 20) - .5) * .6));
+    const target = center + Math.round((light - .5) * spread * 2);
+    const degree = previous + Math.max(-3, Math.min(3, target - previous));
+    previous = degree;
+    return degree;
+  });
+  const notes = Array.from({ length: 64 }, (_, step): LoopNote => {
+    const slot = step % 16, section = Math.floor(step / 16), index = onsets.indexOf(slot);
+    if (index < 0) return { active: false, degree: 0, hold: 1, accent: 0 };
+    let degree = motif[index];
+    // Keep the opening; develop the ending, then return with a cadence.
+    if (section === 2 && index > 0) degree = center - (degree - center) + 1;
+    if (section === 1 && index === onsets.length - 1) degree += 1;
+    if (section === 3 && index === onsets.length - 1) degree = 0;
+    const next = onsets[index + 1] ?? 16;
+    return { active: true, degree,
+      hold: Math.max(1, Math.min(composition.style === 'ambient' ? 6 : 4, next - slot - 1)),
+      accent: (response ? .72 : .86) * (index === 0 ? 1 : .78 + profileAt(tone.profile?.activity, index, tone.texture) * .18) };
+  });
+  return { notes, tone };
+}
+
+/** Strong beats land on a nearby chord tone; weak beats retain passing notes. */
+export function loopMelodyDegree(root: number, event: LoopNote, step: number, previous?: number, range = 2) {
+  const minimum = -3, maximum = range * 7 - 4;
+  let degree = Math.max(minimum, Math.min(maximum, root + event.degree));
+  if (step % 4 === 0) {
+    const chord = [-7, -5, -3, 0, 2, 4, 7, 9, 11].map(value => root + value)
+      .filter(value => value >= minimum && value <= maximum);
+    degree = chord.reduce((best, value) => Math.abs(value - degree) < Math.abs(best - degree) ? value : best, chord[0] ?? degree);
+  }
+  if (previous !== undefined) {
+    const alternatives = [degree - 7, degree, degree + 7].filter(value => value >= minimum && value <= maximum);
+    degree = alternatives.reduce((best, value) => Math.abs(value - previous) < Math.abs(best - previous) ? value : best, degree);
+  }
+  return degree;
 }

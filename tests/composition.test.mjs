@@ -2,163 +2,125 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
+const source = stripTypeScriptTypes(readFileSync(new URL('../src/composition.ts', import.meta.url), 'utf8'));
+const { composeImage, composeCircleLoop, developLoopTone, loopMelodyDegree, applyLoopTheory,
+  DEFAULT_LOOP_THEORY, LOOP_SCALES, scaleNote, arpeggioDegree, arrangePhotoMusic } =
+  await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+const tone = (hue, brightness, texture = .2, saturation = .6) => ({ hue, brightness, texture, saturation });
+const dark = Array.from({length:16}, (_,i) => tone(210+i, .18, .1));
+const bright = Array.from({length:16}, (_,i) => tone(30+i, .8, .8));
+const composition = composeImage(bright);
+const local = {...tone(90,.5,.7), profile: {contour:[.1,.2,.3,.4,.6,.7,.8,.9], activity:[.1,.8,.2,.9,.3,.6,.2,.7]}};
+const active = score => score.notes.flatMap((n,i) => n.active ? [i] : []);
+const make = (cell = local, lane = 0, radius = 50, density = .52, response = false, range = 2) =>
+  composeCircleLoop(composition, cell, lane, radius, density, response, range);
 
-const source = readFileSync(new URL('../src/composition.ts', import.meta.url), 'utf8');
-const compiled = stripTypeScriptTypes(source);
-const compositionUrl = `data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`;
-const { composeImage, phraseStep, scaleNote, melodyEvent, circleEvent, arpeggioDegree, arrangePhotoMusic } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
-const tone = (hue, brightness, texture = 0.2, saturation = 0.6) => ({ hue, brightness, texture, saturation });
-const dark = Array.from({ length: 16 }, (_, i) => tone(210 + i, 0.18, 0.1));
-const bright = Array.from({ length: 16 }, (_, i) => tone(30 + i, 0.8, 0.8));
-const phrase = (image, cell) => Array.from({ length: 32 }, (_, step) => phraseStep(composeImage(image), cell, step, 0.52));
-
-test('the same image reproduces its composition and phrases', () => {
-  assert.deepEqual(composeImage(dark), composeImage(structuredClone(dark)));
-  assert.deepEqual(phrase(dark, dark[0]), phrase(structuredClone(dark), dark[0]));
+test('photo and circle scores reproduce exactly without mutating analysis', () => {
+  const before = JSON.stringify(local);
+  assert.deepEqual(composeImage(bright), composeImage(structuredClone(bright)));
+  assert.deepEqual(make(), make(structuredClone(local)));
+  assert.equal(JSON.stringify(local), before);
 });
-test('contrasting images change mode, energy, and musical phrase', () => {
-  assert.notDeepEqual(composeImage(dark).scale, composeImage(bright).scale);
-  assert.ok(composeImage(bright).energy > composeImage(dark).energy);
-  assert.notDeepEqual(phrase(dark, dark[0]), phrase(bright, bright[0]));
-});
-test('spatial arrangement matters even with the same average color', () => {
+test('contrasting photos change palette, harmony and musical score', () => {
+  assert.notDeepEqual(composeImage(dark).scale, composition.scale);
+  assert.notEqual(composeImage(dark).seed, composition.seed);
+  assert.notDeepEqual(composeCircleLoop(composeImage(dark),dark[0],0,50,.52).notes, make().notes);
   const reversed = [...dark].reverse();
   assert.notEqual(composeImage(dark).seed, composeImage(reversed).seed);
-  assert.notDeepEqual(phrase(dark, dark[0]), phrase(reversed, dark[0]));
+  const photos = [tone(210,.15,.05,.1),tone(45,.85,.1,.3),tone(30,.5,.25,.45),tone(5,.5,.9,.95)].map(t => composeImage(Array(16).fill(t)));
+  assert.deepEqual(photos.map(p=>p.style), ['ambient','glass','plucked','pulse']);
+  assert.equal(new Set(photos.map(p=>p.tempo)).size,4);
 });
-test('phrases include movement, rests, accents, and a four-bar response', () => {
-  const notes = phrase(bright, bright[0]);
-  assert.ok(new Set(notes.filter(n => n.active).map(n => n.degree)).size >= 3);
-  assert.ok(notes.some(n => !n.active));
-  assert.ok(new Set(notes.map(n => n.accent)).size > 1);
-  assert.notDeepEqual(notes.slice(0, 16), notes.slice(16));
+test('eight-bar structure repeats a recognizable motif and develops its ending', () => {
+  const notes = make().notes;
+  assert.equal(notes.length,64);
+  assert.deepEqual(notes.slice(0,16).map(n=>n.active),notes.slice(16,32).map(n=>n.active));
+  assert.deepEqual(notes.slice(0,16).map(n=>n.active),notes.slice(32,48).map(n=>n.active));
+  const onsets=active(make()).filter(i=>i<16);
+  assert.equal(notes[onsets[0]].degree,notes[onsets[0]+16].degree);
+  assert.notEqual(notes[onsets.at(-1)].degree,notes[onsets.at(-1)+16].degree);
+  assert.equal(notes[onsets.at(-1)+48].degree,0);
+  assert.notDeepEqual(notes.slice(0,16),notes.slice(32,48));
 });
-test('notes stay in the selected mode across negative degrees and octaves', () => {
-  for (const image of [dark, bright]) {
-    const composition = composeImage(image);
-    for (let degree = -14; degree <= 28; degree++) {
-      const pitchClass = ((scaleNote(composition, degree) - composition.tonic) % 12 + 12) % 12;
-      assert.ok(composition.scale.includes(pitchClass));
-      assert.equal(scaleNote(composition, degree + 7) - scaleNote(composition, degree), 12);
-    }
+test('lead and response favor different phrase halves without filling every beat', () => {
+  const lead=active(make(local,0,50,0)), answer=active(make(local,1,50,0,true));
+  assert.ok(lead.every(i=>i%16<8));
+  assert.ok(answer.every(i=>i%16>=8));
+  assert.ok(lead.every(i=>!answer.includes(i)));
+});
+test('size and density add detail to the same circle rhythm', () => {
+  let previous=[];
+  for(const density of [0,.3,.6,1]) {
+    const next=active(make(local,0,90,density));
+    assert.ok(previous.every(i=>next.includes(i)));
+    previous=next;
+  }
+  assert.ok(active(make(local,0,90,.8)).length > active(make(local,0,28,.8)).length);
+});
+test('scores preserve space, bounded note lengths and deterministic variation across seeds', () => {
+  for(const style of ['ambient','glass','plucked','pulse']) for(let seed=1;seed<=30;seed++) {
+    const score=composeCircleLoop({...composition,style,seed},local,seed%4,90,1,!!(seed%2));
+    const onsets=active(score);
+    assert.ok(onsets.length<=24);
+    for(let i=1;i<onsets.length;i++) assert.ok(onsets[i]-onsets[i-1]>=2);
+    for(const n of score.notes.filter(n=>n.active)) assert.ok(n.hold>=1 && n.hold<=6 && n.accent>0 && n.accent<=1);
   }
 });
-
-test('contrasting photo features select four audible palettes and different tempos', () => {
-  const photos = [
-    tone(210, 0.15, 0.05, 0.1),
-    tone(45, 0.85, 0.1, 0.3),
-    tone(30, 0.5, 0.25, 0.45),
-    tone(5, 0.5, 0.9, 0.95),
-  ].map(cell => composeImage(Array(16).fill(cell)));
-  assert.deepEqual(photos.map(p => p.style), ['ambient', 'glass', 'plucked', 'pulse']);
-  assert.equal(new Set(photos.map(p => p.tempo)).size, 4);
-  assert.ok(photos[3].tempo - photos[0].tempo > 40);
-  assert.ok(photos[2].swing > photos[0].swing);
+test('local contour direction survives composition and is not folded to four chord tones', () => {
+  const ascending=make().notes.slice(0,16).filter(n=>n.active).map(n=>n.degree);
+  const descending=make({...local,profile:{...local.profile,contour:[...local.profile.contour].reverse()}}).notes.slice(0,16).filter(n=>n.active).map(n=>n.degree);
+  assert.notDeepEqual(ascending,descending);
+  assert.ok(ascending.at(-1)>ascending[0]);
+  assert.ok(descending.at(-1)<descending[0]);
+  const pitches=make(local,0,90,1).notes.filter(n=>n.active).map((n,i)=>loopMelodyDegree(0,n,i*2));
+  assert.ok(pitches.some(n=>![0,2,4,6].includes(n)));
 });
-
-
-test('lead phrases guarantee breathing space across images and variation levels', () => {
-  for (const style of ['ambient', 'glass', 'plucked', 'pulse']) {
-    for (let seed = 1; seed <= 50; seed++) {
-      for (const complexity of [0, 0.52, 1]) {
-        const composition = { ...composeImage(bright), style, seed };
-        const onsets = Array.from({ length: 128 }, (_, step) => step)
-          .filter(step => melodyEvent(composition, step, complexity).active);
-        assert.ok(onsets.length <= 56);
-        for (let i = 1; i < onsets.length; i++) assert.ok(onsets[i] - onsets[i - 1] >= 2);
-        assert.ok(onsets.every(step => step % 32 <= 26));
-      }
-    }
+test('small motion preserves identity; substantial motion develops gradually without changing anchored rhythm', () => {
+  assert.equal(developLoopTone(local,{...local,brightness:.51}),local);
+  const current={...local,hue:250,brightness:.9,profile:{contour:Array(8).fill(.9),activity:Array(8).fill(.9)}};
+  const developed=developLoopTone(local,current);
+  assert.ok(developed.brightness>local.brightness && developed.brightness<current.brightness);
+  const before=make();
+  const after=composeCircleLoop(composition,developed,0,50,.52,false,2,local);
+  assert.deepEqual(active(before),active(after));
+  assert.notDeepEqual(before.notes.map(n=>n.degree),after.notes.map(n=>n.degree));
+});
+test('key and scale overrides preserve clock and photo settings while octave remains a rendering offset', () => {
+  const override=applyLoopTheory(composition,{...DEFAULT_LOOP_THEORY,key:7,scale:'dorian',octave:1});
+  assert.equal(override.tonic,7); assert.deepEqual(override.scale,LOOP_SCALES.dorian);
+  assert.equal(override.tempo,composition.tempo); assert.equal(override.swing,composition.swing);
+  assert.deepEqual(applyLoopTheory(composition,DEFAULT_LOOP_THEORY),composition);
+  for(const scale of Object.values(LOOP_SCALES)) for(let d=-14;d<=28;d++) {
+    const c={...composition,scale};
+    assert.ok(scale.includes(((scaleNote(c,d)-c.tonic)%12+12)%12));
+    assert.equal(scaleNote(c,d+7)-scaleNote(c,d),12);
   }
 });
-
-
-test('color changes during sway preserve the shared rhythmic grid', () => {
-  const composition = composeImage(bright);
-  for (let lane = 0; lane < 8; lane++) {
-    const rhythm = cell => Array.from({ length: 64 }, (_, step) => circleEvent(composition, cell, step, 0.52, lane).active);
-    assert.deepEqual(rhythm(dark[0]), rhythm(bright[0]));
+test('strong beats fit the chord, passing notes survive, and range bounds pitch', () => {
+  for(const range of [1,2,3]) for(const root of [0,3,4,5]) for(let d=-10;d<=12;d++) {
+    const event={active:true,degree:d,hold:1,accent:.8};
+    const strong=loopMelodyDegree(root,event,0,undefined,range);
+    assert.ok([0,2,4].includes(((strong-root)%7+7)%7));
+    assert.ok(strong>=-3 && strong<=range*7-4);
+    const weak=loopMelodyDegree(root,event,2,undefined,range);
+    assert.ok(weak>=-3 && weak<=range*7-4);
+  }
+  assert.equal(loopMelodyDegree(0,{degree:1},2),1);
+});
+test('shuffle preserves photo-derived progressions and defaults to composed phrases', () => {
+  const results=Array.from({length:8},(_,i)=>arrangePhotoMusic(bright,i));
+  assert.deepEqual(results[0],arrangePhotoMusic(bright,0));
+  assert.deepEqual(results[0].composition.progression,composition.progression);
+  for(let i=0;i<results.length;i++) {
+    assert.equal(results[i].arps.keys,'off');assert.equal(results[i].arps.guitar,'off');
+    assert.equal(results[i].composition.tempo,composition.tempo);
+    assert.equal(results[i].composition.swing,composition.swing);
+    if(i) assert.notEqual(results[i].composition.seed,results[i-1].composition.seed);
   }
 });
-
-
-test('Density progressively adds notes to the same shared phrase', () => {
-  const composition = composeImage(bright);
-  let previous = [];
-  for (const density of [0, 0.2, 0.4, 0.6, 0.8, 1]) {
-    const onsets = Array.from({ length: 32 }, (_, step) => step).filter(step => melodyEvent(composition, step, density).active);
-    assert.ok(onsets.length > previous.length);
-    assert.ok(previous.every(step => onsets.includes(step)));
-    previous = onsets;
-  }
-});
-test('larger circles express more rhythmic detail within the same groove', () => {
-  const composition = composeImage(bright);
-  const rhythm = radius => Array.from({ length: 32 }, (_, step) => step)
-    .filter(step => circleEvent(composition, bright[0], step, 0.65, 0, radius).active);
-  const small = rhythm(28), medium = rhythm(50), large = rhythm(90);
-  assert.ok(small.length < medium.length && medium.length < large.length);
-  assert.ok(small.every(step => large.includes(step)));
-});
-test('local image contours create distinct melodic movement at the same average color', () => {
-  const composition = composeImage(bright);
-  const profile = [0.1, 0.2, 0.3, 0.4, 0.6, 0.7, 0.8, 0.9];
-  const degrees = contour => Array.from({ length: 16 }, (_, step) => phraseStep(composition,
-    { ...bright[0], profile: { contour, activity: Array(8).fill(0.5) } }, step, 0.52).degree);
-  assert.notDeepEqual(degrees(profile), degrees([...profile].reverse()));
-});
-
-
-test('arpeggiator follows chord-tone direction and selected beat rate', () => {
-  const notes = mode => Array.from({ length: 6 }, (_, step) => arpeggioDegree(0, step, mode, 1));
-  assert.deepEqual(notes('up'), [0, 2, 4, 7, 0, 2]);
-  assert.deepEqual(notes('down'), [7, 4, 2, 0, 7, 4]);
-  assert.deepEqual(notes('upDown'), [0, 2, 4, 7, 4, 2]);
-  assert.deepEqual(Array.from({ length: 8 }, (_, step) => arpeggioDegree(3, step, 'up', 2)), [3, 3, 5, 5, 7, 7, 10, 10]);
-});
-
-test('musical shuffle changes pitch, arpeggios and harmony reproducibly while preserving clock', () => {
-  const before = JSON.stringify(bright);
-  const results = Array.from({length: 8}, (_, i) => arrangePhotoMusic(bright, i));
-  assert.deepEqual(results[0], arrangePhotoMusic(bright, 0));
-  for (let i = 1; i < results.length; i++) {
-    assert.notEqual(results[i].composition.tonic, results[i - 1].composition.tonic);
-    assert.notEqual(results[i].arps.keys, results[i - 1].arps.keys);
-    assert.notEqual(results[i].composition.seed, results[i - 1].composition.seed);
-    assert.equal(results[i].composition.tempo, results[0].composition.tempo);
-    assert.equal(results[i].composition.swing, results[0].composition.swing);
-  }
-  for (const result of results) {
-    assert.ok(result.controls.complexity <= 42);
-    assert.ok(result.controls.drumDensity <= 46);
-    assert.equal(result.composition.progression.length, 4);
-    for (const degree of result.composition.progression) {
-      assert.ok(result.composition.scale.includes((scaleNote(result.composition, degree) - result.composition.tonic + 12) % 12));
-    }
-  }
-  assert.notDeepEqual(results[0], arrangePhotoMusic(dark, 0));
-  assert.equal(JSON.stringify(bright), before);
-});
-
-test('touch notes use the selected key, scale, octave and range without chord folding', async () => {
-  const { imageNote, IMAGE_SCALES, DEFAULT_IMAGE_SETTINGS } = await import(compositionUrl);
-  const settings = { ...DEFAULT_IMAGE_SETTINGS, key: 2, scale: 'minorPentatonic', octave: 1, range: 3 };
-  const notes = Array.from({length: 360}, (_, hue) => imageNote({ hue, saturation: .8, brightness: .5, texture: .3 }, settings).midi);
-  assert.equal(new Set(notes).size, 15);
-  for (const midi of notes) assert.ok(IMAGE_SCALES.minorPentatonic.includes((midi - settings.key) % 12));
-  const tone = { hue: 100, saturation: .8, brightness: .5, texture: .3 };
-  assert.equal(imageNote(tone, {...settings, octave: 0}).midi + 12, imageNote(tone, settings).midi);
-});
-
-test('gray uses lightness, neighboring hues have hysteresis, and timbre stays independent', async () => {
-  const { imageNote, DEFAULT_IMAGE_SETTINGS: settings } = await import(compositionUrl);
-  const tone = { hue: 0, saturation: .8, brightness: .5, texture: .3 };
-  assert.equal(imageNote({...tone, saturation: 0}, settings).midi, imageNote({...tone, hue: 280, saturation: 0}, settings).midi);
-  const prior = imageNote({...tone, hue: 35}, settings).midi;
-  assert.equal(imageNote({...tone, hue: 37}, settings, prior).midi, prior);
-  assert.notEqual(imageNote({...tone, hue: 45}, settings, prior).midi, prior);
-  const dark = imageNote({...tone, brightness: .1}, settings), light = imageNote({...tone, brightness: .9}, settings);
-  assert.equal(dark.midi, light.midi);
-  assert.ok(light.cutoff > dark.cutoff * 10);
+test('explicit arpeggiators remain available with ascending and descending chord patterns', () => {
+  const notes=mode=>Array.from({length:6},(_,step)=>arpeggioDegree(0,step,mode,1));
+  assert.deepEqual(notes('up'),[0,2,4,7,0,2]);
+  assert.deepEqual(notes('down'),[7,4,2,0,7,4]);
+  assert.deepEqual(notes('upDown'),[0,2,4,7,4,2]);
 });

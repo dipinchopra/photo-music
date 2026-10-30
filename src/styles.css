@@ -523,12 +523,10 @@ html, body, #root, .app, .app * {
   .headerActions .uploadButton { padding: 10px; font-size: 10px; }
 }
 
-.imageMusicControls { display: grid; grid-template-columns: 1fr 2fr 1fr 1fr; gap: 10px; padding: 14px 0; }
-.imageMusicControls label { display: flex; flex-direction: column; gap: 6px; color: #bbb; font-size: 12px; min-width: 0; }
-.imageMusicControls select { width: 100%; min-height: 42px; padding: 8px; border: 1px solid #ffffff25; border-radius: 10px; background: #202020; color: #eee; font: inherit; }
-.imageMusicControls p { grid-column: 1 / -1; margin: 0; color: #999; font-size: 12px; line-height: 1.5; }
-@media (max-width: 560px) {
-  .imageMusicControls { grid-template-columns: 1fr 1fr; }
-  .performanceBar .modePicker { flex-wrap: wrap; }
-  .performanceBar .modePicker button { padding: 9px 11px; }
-}
+.loopTheoryControls { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding-bottom: 12px; }
+.loopTheoryControls p { grid-column: 1 / -1; margin: 0; color: #aaa; font-size: 12px; line-height: 1.6; }
+.loopTheoryControls label { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.loopTheoryControls select { width: 100%; min-height: 44px; padding: 10px; border: 1px solid #ffffff25; border-radius: 9px; background: #222; color: #eee; font: inherit; font-size: 13px; }
+.loopTheoryControls small { line-height: 1.5; }
+
+.theoryButton.active { --instrument-color: #f5f5f5; }

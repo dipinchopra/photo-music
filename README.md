@@ -1,61 +1,47 @@
-# Image → Music V1
+# Image → Music
 
-A backend-free web prototype that turns an uploaded image into a playable musical surface.
+A browser instrument that generates music from objects placed on a photograph.
+Built with React, TypeScript, Canvas, Pointer Events and Web Audio; no backend required.
 
-## Play image
+## Place loops
 
-Upload a photo to play its pixels directly. Tap for a note, hold to sustain,
-drag to change pitch and tone, or use multiple fingers for chords (up to eight voices).
-No sample kit or sequencer is required in this mode.
+1. Upload a photo, choose Keys, Guitar, Bass or Drums, and tap to place a circle.
+2. Each circle plays automatically. Drag to move it; tap with the same instrument to remove it.
+3. Use Motion to let circles sway or breathe. Undo, Redo and Shuffle remain available.
+4. Open Music for key, scale, octave and melodic range. Auto key/scale use the photo's analysis.
 
-- Local average hue chooses a scale degree across the selected range.
-- Near-gray regions use lightness to select pitch instead of unstable hue.
-- Brightness controls the low-pass filter; saturation adds harmonic richness.
-- Texture controls attack and release. Note boundaries use hysteresis to reduce jitter.
-- Key, scale, octave and range controls retune the image instrument, including held notes.
-- Pointer release/cancellation, changing modes and hiding the page release held voices.
-- Record captures the audio and the active photo visuals where browser recording is supported.
+There is no finger-controlled Play image mode. Placing a circle adds an autonomous part.
+The existing sample-pad instrument remains available under Sample pads.
 
-Place loops and Sample pads remain available as separate modes. Switching to Play image
-clears the loop board (recoverable through Undo in Place loops) and stops sample loops.
-The image instrument uses the Image volume and Keys volume mixer paths.
+## Composition
 
-## Stack
+- The whole photo establishes style, tempo, swing, scale and a spatially derived chord progression.
+- Each melodic circle gets a repeatable two-bar motif inside an eight-bar statement/repeat/answer/return structure.
+- Local light contours shape melodic direction; edge activity shapes rhythm and accents. Circle size and Variation control detail.
+- Lead and response roles favor different phrase halves. At most two Keys or Guitar attacks sound per clock step; priority rotates so additional circles remain audible.
+- Strong beats prefer chord tones, weak beats allow passing scale notes, and octave choices favor nearby notes.
+- Moving circles keep their rhythm identity. Significant region changes gradually develop their notes at two-bar boundaries. Continuous image sampling still changes the timbre of sounding notes.
+- Bass supports the common harmony; percussion uses phrase-sampled regional character. Four-on-the-floor is optional and starts off.
+- Shuffle varies photo-derived harmony and ensemble without enabling automatic arpeggios. Explicit arpeggiator controls remain available.
+- Music settings preserve the clock. Key, scale and octave affect the next notes; melodic range shapes the next phrase. Settings persist through Shuffle and photo changes until changed explicitly.
 
-- React
-- TypeScript
-- Vite
-- HTML Canvas
-- Web Audio API
-- Pointer Events
-- Vibration API where supported
-
-Three.js is intentionally not used in V1. It is unnecessary for a 2D image + spotlight interaction and can be introduced later for depth, shaders, particles or spatial visuals.
-
-## Run locally
+## Run and verify
 
 ```bash
 npm install
-npm run dev
-```
-
-Then open the local URL printed by Vite.
-
-## Build
-
-```bash
+npm run dev -- --host 0.0.0.0
 npm run build
+node --test tests/*.test.mjs
 ```
 
-## Suggested next milestones
+Tests use Node's TypeScript stripping API (Node 22.13+). Open the network URL printed by Vite on a device on the same Wi-Fi, or use the GitHub Pages deployment.
 
-1. Replace simple oscillators with a polished sampled or synthesized instrument.
-2. Add 3 sound modes: Dream, Ambient, Digital.
-3. Add auto-play scan mode.
-4. Cache a downscaled analysis canvas instead of rebuilding the sampling canvas per pointer event.
-5. Add record/playback of pointer movement and generated notes.
-6. Add shareable audio/video export.
+## Recording and mobile
 
-## Important mobile note
+Record captures the photo visuals and the shared audio mix using MediaRecorder where supported.
+Audio starts from a user gesture. Visibility and audio-state recovery handle interrupted browser playback.
+Device browser audio and recording support still require hands-on testing.
 
-`navigator.vibrate()` is not supported consistently across iOS Safari. Native iOS haptics would require a native wrapper/app implementation (for example Capacitor + native haptic APIs). The web V1 gracefully works without it.
+## Deployment
+
+Pushes to `main` run `.github/workflows/deploy-pages.yml`, build `dist`, and publish to GitHub Pages.

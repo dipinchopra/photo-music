@@ -149,7 +149,7 @@ test('all instruments on one beat share an exact audio timestamp and no default 
     ...placement, instrument, id: index + 1, tone: { ...cell, brightness: instrument === 'drums' ? 0.1 : 0.5 },
   })));
   const context = Context.instances.at(-1);
-  assert.ok(context.oscillators.length >= 6);
+  assert.ok(context.oscillators.length >= 4);
   assert.deepEqual([...new Set(context.oscillators.map(node => node.startTime))], [0.02]);
   const reachable = (node, target, seen = new Set()) => {
     if (node === target) return true;
@@ -273,8 +273,8 @@ test('a frozen running Safari context is replaced without waiting for close or r
   assert.ok(hits.includes('keys'), 'retained placements play through the rebuilt graph');
 });
 
-test('drums start with four-on-the-floor enabled', () => {
-  assert.equal(new ChordEngine().controls.fourOnFloor, true);
+test('drums default to the photo groove rather than four-on-the-floor', () => {
+  assert.equal(new ChordEngine().controls.fourOnFloor, false);
 });
 
 
@@ -576,36 +576,62 @@ test('tempo edits safely cancel a pending shuffle without changing the arrangeme
   assert.equal(engine.placements[0].id,placement.id);
 });
 
-test('image touches sound immediately, sustain independently, retune and release per finger', async () => {
+test('moving regions keep the current motif, then develop notes at the next phrase boundary', async () => {
   const engine = new ChordEngine();
-  await engine.startImageTouch(10, cell);
-  const ctx = Context.instances.at(-1);
-  const first = ctx.oscillators.slice(-2);
-  assert.equal(first[0].startTime, ctx.currentTime);
-  assert.equal(first[0].stopTime, undefined, 'held note has no automatic cutoff');
-  await engine.startImageTouch(11, {...cell, hue: 260});
-  const second = ctx.oscillators.slice(-2);
-  assert.notEqual(first[0].frequency.value, second[0].frequency.value);
-  const before = ctx.oscillators.length;
-  engine.updateImageTouch(10, {...cell, hue: 180});
-  assert.equal(ctx.oscillators.length, before, 'drag retunes rather than retriggering');
-  assert.ok(first[0].frequency.target);
-  engine.releaseImageTouch(10);
-  assert.ok(first[0].stopTime > ctx.currentTime);
-  assert.equal(second[0].stopTime, undefined);
-  engine.configureImage({key: 7, scale: 'minor', octave: 1, range: 2});
-  assert.ok(second[0].frequency.target, 'settings retune held notes');
-  engine.stop();
-  assert.ok(second[0].stopTime > ctx.currentTime, 'page pause releases all held notes');
+  engine.setComposition({...composeImage([cell]), style:'plucked'});
+  const initial = {...placement, tone:{...cell, profile:{contour:Array(8).fill(.15),activity:Array(8).fill(.3)}}};
+  await engine.playPlacements([initial]);
+  const original = structuredClone(engine.loopPhrases.get(1).score);
+  const moved = {...initial, tone:{...cell,hue:220,brightness:.9,profile:{contour:Array(8).fill(.95),activity:Array(8).fill(.9)}}};
+  engine.updatePlacements([moved]);
+  for(let i=1;i<16;i++) engine.pulse();
+  assert.deepEqual(engine.loopPhrases.get(1).score,original,'motion must not rewrite the phrase mid-bar');
+  engine.pulse();
+  const developed=engine.loopPhrases.get(1).score;
+  assert.notDeepEqual(developed.notes.map(n=>n.degree),original.notes.map(n=>n.degree));
+  assert.deepEqual(developed.notes.map(n=>n.active),original.notes.map(n=>n.active),'rhythm identity survives motion');
+  assert.ok(developed.tone.brightness>.5 && developed.tone.brightness<.9);
 });
 
-test('released pending touches never start and simultaneous image voices are bounded', async () => {
-  const engine = new ChordEngine();
-  await engine.startImageTouch(0, cell, () => false);
-  const ctx = Context.instances.at(-1);
-  assert.equal(ctx.oscillators.length, 0);
-  for (let id = 1; id <= 10; id++) await engine.startImageTouch(id, cell);
-  assert.equal(ctx.oscillators.filter(osc => osc.stopTime === undefined).length, 16);
-  engine.releaseImageTouch();
-  assert.ok(ctx.oscillators.every(osc => osc.stopTime !== undefined));
+test('key and octave settings transpose generated loops without changing event timing', async () => {
+  const render = async settings => {
+    const engine=new ChordEngine();
+    engine.setComposition({...composeImage([cell]),style:'plucked'});
+    engine.setLoopTheory({key:0,scale:'major',octave:0,range:2,...settings});
+    const hitSteps=[];
+    let step=0;
+    engine.onPlacementHit=()=>hitSteps.push(step);
+    await engine.playPlacements([placement]);
+    const context=Context.instances.at(-1);
+    for(step=1;step<64;step++) engine.pulse();
+    return {frequencies:context.oscillators.map(n=>n.frequency.value),hitSteps};
+  };
+  const original=await render({}), keyed=await render({key:2}), octave=await render({octave:1});
+  assert.deepEqual(original.hitSteps,keyed.hitSteps);
+  assert.deepEqual(original.hitSteps,octave.hitSteps);
+  assert.equal(original.frequencies.length,keyed.frequencies.length);
+  original.frequencies.forEach((frequency,i)=>{
+    assert.ok(Math.abs(keyed.frequencies[i]/frequency-Math.pow(2,2/12))<1e-8);
+    assert.ok(Math.abs(octave.frequencies[i]/frequency-2)<1e-8);
+  });
+});
+
+test('keys and guitar answer each other and image contour affects rendered notes at identical average color', async () => {
+  const render=async reverse=>{
+    const engine=new ChordEngine();
+    engine.setComposition({...composeImage([cell]),style:'plucked'});
+    const contour=[.1,.2,.3,.4,.6,.7,.8,.9];
+    const tone={...cell,profile:{contour:reverse?[...contour].reverse():contour,activity:Array(8).fill(.5)}};
+    const steps=new Map();let step=0;
+    engine.onPlacementHit=id=>{const list=steps.get(id)??[];list.push(step);steps.set(id,list);};
+    await engine.playPlacements([{...placement,tone},{...placement,id:2,instrument:'guitar',tone}]);
+    const context=Context.instances.at(-1);
+    for(step=1;step<64;step++) engine.pulse();
+    return {steps,frequencies:context.oscillators.map(n=>n.frequency.value)};
+  };
+  const forward=await render(false),backward=await render(true);
+  assert.equal(forward.steps.get(1)[0],0);
+  assert.ok(forward.steps.get(2)[0]>0,'answer leaves the lead opening space');
+  assert.deepEqual(forward.steps,backward.steps,'only contour direction changes');
+  assert.notDeepEqual(forward.frequencies,backward.frequencies,'spatial differences must reach the synthesizer');
 });

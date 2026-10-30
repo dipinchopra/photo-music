@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 const load = async path => import(`data:text/javascript;base64,${Buffer.from(stripTypeScriptTypes(readFileSync(new URL(path, import.meta.url), 'utf8'))).toString('base64')}`);
 const { sampleAverageColor } = await load('../src/color.ts');
-const { composeImage, phraseStep } = await load('../src/composition.ts');
+const { composeImage, composeCircleLoop } = await load('../src/composition.ts');
 
 function context(pixel) {
   return {
@@ -32,7 +32,7 @@ test('real pixel arrangement changes melodic contour despite the same average pa
   assert.ok(Math.abs(a.brightness - b.brightness) < 0.04);
   assert.notDeepEqual(a.profile.contour, b.profile.contour);
   const composition = composeImage([a]);
-  const notes = local => Array.from({ length: 16 }, (_, step) => phraseStep(composition, local, step, 0.5).degree);
+  const notes = local => composeCircleLoop(composition, local, 0, 50, .5).notes.filter(n => n.active).map(n => n.degree);
   assert.notDeepEqual(notes(a), notes(b));
 });
 test('enlarging a circular sample captures surrounding image material', () => {
