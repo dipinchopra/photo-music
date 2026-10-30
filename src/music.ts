@@ -1,4 +1,4 @@
-import { composeImage, circleEvent, phraseStep, randomAt, scaleNote, arpeggioDegree, type ArpMode, type Composition } from './composition';
+import { composeImage, circleEvent, phraseStep, randomAt, scaleNote, arpeggioDegree, type ArpMode, type Composition, imageNote, DEFAULT_IMAGE_SETTINGS, type ImageSettings } from './composition';
 import { SampleBank, PHOTO_PADS } from './pads';
 import { sampleHarmony, sampleDrumStep } from './harmony';
 
@@ -65,6 +65,62 @@ function hz(semitones: number) {
 type TimbreBinding = { filter: BiquadFilterNode; colourGain: GainNode; cutoff: number; tone: ImageTone };
 
 export class ChordEngine {
+  private imageSettings: ImageSettings = { ...DEFAULT_IMAGE_SETTINGS };
+  private imageVoices = new Map<number, { oscillators: OscillatorNode[]; gain: GainNode; filter: BiquadFilterNode;
+    harmonic: GainNode; midi: number; release: number; tone: ImageTone }>();
+
+  configureImage(settings: ImageSettings) {
+    this.imageSettings = { ...settings };
+    this.imageVoices.forEach((voice, id) => this.updateImageTouch(id, voice.tone));
+  }
+
+  async startImageTouch(id: number, tone: ImageTone, valid: () => boolean = () => true) {
+    await this.unlock();
+    if (!valid() || !this.context || !this.running) return;
+    this.releaseImageTouch(id);
+    if (this.imageVoices.size >= 8) this.releaseImageTouch(this.imageVoices.keys().next().value!);
+    const note = imageNote(tone, this.imageSettings);
+    const now = this.context.currentTime;
+    const fundamental = this.context.createOscillator(), overtone = this.context.createOscillator();
+    const harmonic = this.context.createGain(), filter = this.context.createBiquadFilter(), gain = this.context.createGain();
+    fundamental.type = 'triangle'; overtone.type = 'sawtooth';
+    const frequency = 440 * Math.pow(2, (note.midi - 69) / 12);
+    fundamental.frequency.value = frequency; overtone.frequency.value = frequency * 2;
+    harmonic.gain.value = note.richness * 0.22;
+    filter.type = 'lowpass'; filter.frequency.value = note.cutoff;
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.11, now + note.attack);
+    fundamental.connect(filter); overtone.connect(harmonic); harmonic.connect(filter);
+    filter.connect(gain); gain.connect(this.placedMix.get('keys')!);
+    this.imageVoices.set(id, { oscillators: [fundamental, overtone], gain, filter, harmonic,
+      midi: note.midi, release: note.release, tone });
+    fundamental.start(now); overtone.start(now);
+    fundamental.onended = () => { fundamental.disconnect(); overtone.disconnect(); harmonic.disconnect(); filter.disconnect(); gain.disconnect(); };
+  }
+
+  updateImageTouch(id: number, tone: ImageTone) {
+    const voice = this.imageVoices.get(id);
+    if (!voice || !this.context) return;
+    const note = imageNote(tone, this.imageSettings, voice.midi), now = this.context.currentTime;
+    const frequency = 440 * Math.pow(2, (note.midi - 69) / 12);
+    voice.oscillators.forEach((osc, index) => osc.frequency.setTargetAtTime(frequency * (index + 1), now, 0.018));
+    voice.filter.frequency.setTargetAtTime(note.cutoff, now, 0.035);
+    voice.harmonic.gain.setTargetAtTime(note.richness * 0.22, now, 0.035);
+    voice.midi = note.midi; voice.release = note.release; voice.tone = tone;
+  }
+
+  releaseImageTouch(id?: number) {
+    if (id === undefined) { [...this.imageVoices.keys()].forEach(key => this.releaseImageTouch(key)); return; }
+    const voice = this.imageVoices.get(id);
+    if (!voice || !this.context) return;
+    this.imageVoices.delete(id);
+    const now = this.context.currentTime;
+    if (typeof voice.gain.gain.cancelAndHoldAtTime === 'function') voice.gain.gain.cancelAndHoldAtTime(now);
+    else { voice.gain.gain.cancelScheduledValues(now); voice.gain.gain.setValueAtTime(Math.max(0.0001, voice.gain.gain.value), now); }
+    voice.gain.gain.exponentialRampToValueAtTime(0.0001, now + voice.release);
+    voice.oscillators.forEach(osc => { try { osc.stop(now + voice.release + 0.02); } catch {} });
+  }
+
   private context: AudioContext | null = null;
   private output: GainNode | null = null;
   private placedMaster: GainNode | null = null;
@@ -755,6 +811,7 @@ export class ChordEngine {
   }
 
   stop(release = 0.12, preserveSampleLoops = false) {
+    this.releaseImageTouch();
     this.cancelShuffle(); this.placedVoices.clear();
     this.transportFrames = [];
     if (preserveSampleLoops) this.sampleLoops.forEach(loop => { loop.startStep = this.step; });

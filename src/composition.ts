@@ -57,8 +57,8 @@ export function composeImage(cells: ImageTone[]): Composition {
 }
 
 export function scaleNote(composition: Composition, degree: number) {
-  const octave = Math.floor(degree / 7);
-  return composition.tonic + composition.scale[((degree % 7) + 7) % 7] + octave * 12;
+  const octave = Math.floor(degree / composition.scale.length);
+  return composition.tonic + composition.scale[((degree % composition.scale.length) + composition.scale.length) % composition.scale.length] + octave * 12;
 }
 
 /** A repeatable two-bar motif, with a response and a turnaround every four bars. */
@@ -152,4 +152,37 @@ export function arrangePhotoMusic(cells: ImageTone[], variation: number) {
       drumDensity: 24 + Math.round(pick(7) * 22), drumPunch: 52 + Math.round(pick(8) * 18),
     },
   };
+}
+
+
+export const IMAGE_SCALES = {
+  pentatonic: [0, 2, 4, 7, 9],
+  minorPentatonic: [0, 3, 5, 7, 10],
+  major: [0, 2, 4, 5, 7, 9, 11],
+  minor: [0, 2, 3, 5, 7, 8, 10],
+  dorian: [0, 2, 3, 5, 7, 9, 10],
+  lydian: [0, 2, 4, 6, 7, 9, 11],
+} as const;
+export type ImageSettings = { key: number; scale: keyof typeof IMAGE_SCALES; octave: number; range: number };
+export const DEFAULT_IMAGE_SETTINGS: ImageSettings = { key: 0, scale: 'pentatonic', octave: 0, range: 2 };
+
+/** Local color chooses a note directly, independently of the transport/chords. */
+export function imageNote(tone: ImageTone, settings: ImageSettings, previousMidi?: number) {
+  const scale = IMAGE_SCALES[settings.scale];
+  const count = scale.length * settings.range;
+  // Hue has no useful meaning near gray; lightness provides a stable fallback.
+  const position = tone.saturation < 0.12 ? tone.brightness : ((tone.hue % 360) + 360) % 360 / 360;
+  const continuous = Math.max(0, Math.min(0.999999, position)) * count;
+  let degree = Math.floor(continuous);
+  const base = 48 + settings.key + settings.octave * 12;
+  // Hysteresis: keep the previous note slightly beyond its bin boundary.
+  if (previousMidi !== undefined) {
+    const previousDegree = Array.from({ length: count }, (_, i) => i)
+      .find(i => base + scale[i % scale.length] + Math.floor(i / scale.length) * 12 === previousMidi);
+    if (previousDegree !== undefined && continuous >= previousDegree - 0.18 && continuous < previousDegree + 1.18) degree = previousDegree;
+  }
+  const midi = Math.max(24, Math.min(120, base + scale[degree % scale.length] + Math.floor(degree / scale.length) * 12));
+  return { midi, cutoff: 250 * Math.pow(40, tone.brightness),
+    richness: tone.saturation, attack: 0.012 + (1 - tone.texture) * 0.07,
+    release: 0.09 + (1 - tone.texture) * 0.4 };
 }

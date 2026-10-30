@@ -5,6 +5,7 @@ import { stripTypeScriptTypes } from 'node:module';
 
 const source = readFileSync(new URL('../src/composition.ts', import.meta.url), 'utf8');
 const compiled = stripTypeScriptTypes(source);
+const compositionUrl = `data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`;
 const { composeImage, phraseStep, scaleNote, melodyEvent, circleEvent, arpeggioDegree, arrangePhotoMusic } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 const tone = (hue, brightness, texture = 0.2, saturation = 0.6) => ({ hue, brightness, texture, saturation });
 const dark = Array.from({ length: 16 }, (_, i) => tone(210 + i, 0.18, 0.1));
@@ -138,4 +139,26 @@ test('musical shuffle changes pitch, arpeggios and harmony reproducibly while pr
   }
   assert.notDeepEqual(results[0], arrangePhotoMusic(dark, 0));
   assert.equal(JSON.stringify(bright), before);
+});
+
+test('touch notes use the selected key, scale, octave and range without chord folding', async () => {
+  const { imageNote, IMAGE_SCALES, DEFAULT_IMAGE_SETTINGS } = await import(compositionUrl);
+  const settings = { ...DEFAULT_IMAGE_SETTINGS, key: 2, scale: 'minorPentatonic', octave: 1, range: 3 };
+  const notes = Array.from({length: 360}, (_, hue) => imageNote({ hue, saturation: .8, brightness: .5, texture: .3 }, settings).midi);
+  assert.equal(new Set(notes).size, 15);
+  for (const midi of notes) assert.ok(IMAGE_SCALES.minorPentatonic.includes((midi - settings.key) % 12));
+  const tone = { hue: 100, saturation: .8, brightness: .5, texture: .3 };
+  assert.equal(imageNote(tone, {...settings, octave: 0}).midi + 12, imageNote(tone, settings).midi);
+});
+
+test('gray uses lightness, neighboring hues have hysteresis, and timbre stays independent', async () => {
+  const { imageNote, DEFAULT_IMAGE_SETTINGS: settings } = await import(compositionUrl);
+  const tone = { hue: 0, saturation: .8, brightness: .5, texture: .3 };
+  assert.equal(imageNote({...tone, saturation: 0}, settings).midi, imageNote({...tone, hue: 280, saturation: 0}, settings).midi);
+  const prior = imageNote({...tone, hue: 35}, settings).midi;
+  assert.equal(imageNote({...tone, hue: 37}, settings, prior).midi, prior);
+  assert.notEqual(imageNote({...tone, hue: 45}, settings, prior).midi, prior);
+  const dark = imageNote({...tone, brightness: .1}, settings), light = imageNote({...tone, brightness: .9}, settings);
+  assert.equal(dark.midi, light.midi);
+  assert.ok(light.cutoff > dark.cutoff * 10);
 });

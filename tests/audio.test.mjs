@@ -575,3 +575,37 @@ test('tempo edits safely cancel a pending shuffle without changing the arrangeme
   assert.equal(await pending,false);
   assert.equal(engine.placements[0].id,placement.id);
 });
+
+test('image touches sound immediately, sustain independently, retune and release per finger', async () => {
+  const engine = new ChordEngine();
+  await engine.startImageTouch(10, cell);
+  const ctx = Context.instances.at(-1);
+  const first = ctx.oscillators.slice(-2);
+  assert.equal(first[0].startTime, ctx.currentTime);
+  assert.equal(first[0].stopTime, undefined, 'held note has no automatic cutoff');
+  await engine.startImageTouch(11, {...cell, hue: 260});
+  const second = ctx.oscillators.slice(-2);
+  assert.notEqual(first[0].frequency.value, second[0].frequency.value);
+  const before = ctx.oscillators.length;
+  engine.updateImageTouch(10, {...cell, hue: 180});
+  assert.equal(ctx.oscillators.length, before, 'drag retunes rather than retriggering');
+  assert.ok(first[0].frequency.target);
+  engine.releaseImageTouch(10);
+  assert.ok(first[0].stopTime > ctx.currentTime);
+  assert.equal(second[0].stopTime, undefined);
+  engine.configureImage({key: 7, scale: 'minor', octave: 1, range: 2});
+  assert.ok(second[0].frequency.target, 'settings retune held notes');
+  engine.stop();
+  assert.ok(second[0].stopTime > ctx.currentTime, 'page pause releases all held notes');
+});
+
+test('released pending touches never start and simultaneous image voices are bounded', async () => {
+  const engine = new ChordEngine();
+  await engine.startImageTouch(0, cell, () => false);
+  const ctx = Context.instances.at(-1);
+  assert.equal(ctx.oscillators.length, 0);
+  for (let id = 1; id <= 10; id++) await engine.startImageTouch(id, cell);
+  assert.equal(ctx.oscillators.filter(osc => osc.stopTime === undefined).length, 16);
+  engine.releaseImageTouch();
+  assert.ok(ctx.oscillators.every(osc => osc.stopTime !== undefined));
+});

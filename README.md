@@ -2,16 +2,23 @@
 
 A backend-free web prototype that turns an uploaded image into a playable musical surface.
 
-## V1 interaction
+## Play image
 
-- Upload any image.
-- Hover on desktop, or touch/drag on mobile.
-- The image darkens while a soft circular spotlight reveals the active area.
-- Local hue selects a chord in C major.
-- Brightness changes octave.
-- Saturation can add a richer chord tone.
-- Chords are generated with the Web Audio API.
-- Mobile browsers that support the Vibration API receive subtle rhythmic pulses.
+Upload a photo to play its pixels directly. Tap for a note, hold to sustain,
+drag to change pitch and tone, or use multiple fingers for chords (up to eight voices).
+No sample kit or sequencer is required in this mode.
+
+- Local average hue chooses a scale degree across the selected range.
+- Near-gray regions use lightness to select pitch instead of unstable hue.
+- Brightness controls the low-pass filter; saturation adds harmonic richness.
+- Texture controls attack and release. Note boundaries use hysteresis to reduce jitter.
+- Key, scale, octave and range controls retune the image instrument, including held notes.
+- Pointer release/cancellation, changing modes and hiding the page release held voices.
+- Record captures the audio and the active photo visuals where browser recording is supported.
+
+Place loops and Sample pads remain available as separate modes. Switching to Play image
+clears the loop board (recoverable through Undo in Place loops) and stops sample loops.
+The image instrument uses the Image volume and Keys volume mixer paths.
 
 ## Stack
 
