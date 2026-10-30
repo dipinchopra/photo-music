@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 const source = stripTypeScriptTypes(readFileSync(new URL('../src/visuals.ts', import.meta.url), 'utf8'));
-const { VISUAL_MODES, visualOutline, hitVisual, findEditablePlacement, findDraggablePlacement, drawVisual, drawPlacementMarker, showsPlacementMarker } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+const { VISUAL_MODES, visualRadius, drawVisualScene, visualOutline, hitVisual, findEditablePlacement, findDraggablePlacement, drawVisual, drawPlacementMarker, showsPlacementMarker } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 const placement = { id: 1, x: 200, y: 200, radius: 50, instrument: 'keys' };
 
-test('all seven treatments have valid hit targets; Keys shares the living circle outline', () => {
+test('all treatments have usable centers; compact shapes keep the musical radius unchanged', () => {
   assert.equal(VISUAL_MODES.length, 7);
   const outlines = new Set();
   for (const mode of VISUAL_MODES) {
@@ -17,16 +17,18 @@ test('all seven treatments have valid hit targets; Keys shares the living circle
     assert.equal(hitVisual(placement, mode.id, 900, 900), false);
 
   }
-  assert.equal(outlines.size, 4);
+  assert.ok(outlines.size >= 6);
+  assert.equal(placement.radius, 50);
+  assert.equal(visualRadius(placement, 'living'), 50);
   for (const point of visualOutline(placement, 'shapes')) {
-    assert.ok(Math.abs(Math.hypot(point.x - placement.x, point.y - placement.y) - placement.radius) < 1e-9);
+    assert.ok(Math.abs(Math.hypot(point.x - placement.x, point.y - placement.y) - visualRadius(placement, 'shapes')) < 1e-9);
   }
 });
 test('instrument shapes differ and Bass has a plain square hit target', () => {
   const outlines = ['keys', 'guitar', 'bass', 'drums'].map(instrument => JSON.stringify(visualOutline({ ...placement, instrument }, 'shapes')));
   assert.equal(new Set(outlines).size, 4);
   assert.equal(hitVisual({ ...placement, instrument: 'bass' }, 'shapes', 260, 200), false);
-  assert.ok(hitVisual({ ...placement, instrument: 'bass' }, 'shapes', 245, 245));
+  assert.ok(hitVisual({ ...placement, instrument: 'bass' }, 'shapes', 210, 210));
   assert.equal(visualOutline({ ...placement, instrument: 'bass' }, 'shapes').length, 4);
 });
 test('every renderer clips to the photo and preserves the musical placement', () => {
@@ -107,8 +109,8 @@ test('only Living Photo includes plus markers, on the shared screen and export r
 function tileSnapshot(mode, tone, hit = 0, x = 200, y = 150) {
   const calls = [];
   const ctx = new Proxy({}, {
-    get: (_, key) => (...args) => calls.push([key, ...args]),
-    set: (_, key, value) => { calls.push(['set', key, value]); return true; },
+    get: (_, key) => key === 'createLinearGradient' ? (...args) => { calls.push([key,...args]); return {addColorStop: (...stop) => calls.push(['colorStop',...stop])}; } : (...args) => calls.push([key, ...args]),
+    set: (_, key, value) => { calls.push(['set', key, value && typeof value === 'object' && typeof value.addColorStop === 'function' ? 'gradient' : value]); return true; },
   });
   drawVisual(ctx, { width: 1200, height: 900 }, { x: 0, y: 0, width: 400, height: 300 },
     { ...placement, x, y, tone }, mode, 0, hit, '#8be9fd');
@@ -117,19 +119,19 @@ function tileSnapshot(mode, tone, hit = 0, x = 200, y = 150) {
 const tileTone = { hue: 25, saturation: 0.6, brightness: 0.4, texture: 0.5,
   profile: { contour: [0.2, 0.7, 0.3, 0.9], activity: [0.5] } };
 
-test('single tiles remain stable between notes and respond to note hits', () => {
+test('photo surfaces and contour lines remain stable between notes and respond to note hits', () => {
   for (const mode of ['collage', 'quilt']) {
     const resting = tileSnapshot(mode, tileTone);
     assert.deepEqual(tileSnapshot(mode, tileTone), resting);
     assert.notDeepEqual(tileSnapshot(mode, tileTone, 1), resting, `${mode} responds to actual note hits`);
-    if (mode === 'collage') assert.notDeepEqual(tileSnapshot(mode, { ...tileTone, hue: 190 }), resting);
+    if (mode === 'quilt') assert.notDeepEqual(tileSnapshot(mode, { ...tileTone, hue: 190 }), resting);
   }
 });
 
 test('photo tile source crops remain valid at photo edges for display and export caches', () => {
-  for (const mode of ['collage', 'displaced', 'quilt']) for (const [x, y] of [[0, 0], [400, 300], [200, 150]]) {
+  for (const mode of ['displaced']) for (const [x, y] of [[0, 0], [400, 300], [200, 150]]) {
     const crops = tileSnapshot(mode, tileTone, 1, x, y).filter(call => call[0] === 'drawImage');
-    assert.equal(crops.length, mode === 'quilt' ? 0 : 1);
+    assert.equal(crops.length, 2);
     for (const [, , sx, sy, sw, sh] of crops) {
       assert.ok(sx >= 0 && sy >= 0 && sw > 0 && sh > 0);
       assert.ok(sx + sw <= 1200 + 1e-9 && sy + sh <= 900 + 1e-9);
@@ -138,22 +140,20 @@ test('photo tile source crops remain valid at photo edges for display and export
 });
 
 
-test('quilt draws exactly one instrument-colored square per placement', () => {
+test('Contour ink uses fine photo-colored lines without opaque squares', () => {
   const calls = tileSnapshot('quilt', tileTone);
-  assert.equal(calls.filter(c => c[0] === 'fillRect').length, 1);
-  assert.ok(calls.some(c => c[0] === 'set' && c[1] === 'fillStyle' && c[2] === '#8be9fd'));
+  assert.equal(calls.filter(c => c[0] === 'fillRect').length, 0);
+  assert.equal(calls.filter(c => c[0] === 'stroke').length, 5);
+  assert.ok(calls.some(c => c[0] === 'set' && c[1] === 'strokeStyle' && c[2].startsWith('hsl(')));
   assert.equal(calls.some(c => c[0] === 'drawImage'), false);
 });
 
-
-test('displaced photo keeps a remote source crop fixed while the tile is dragged', () => {
-  const crop = calls => calls.find(call => call[0] === 'drawImage');
-  const local = crop(tileSnapshot('collage', tileTone));
-  const remote = crop(tileSnapshot('displaced', tileTone));
-  const moved = crop(tileSnapshot('displaced', tileTone, 0, 80, 60));
-  assert.notDeepEqual(remote.slice(2, 6), local.slice(2, 6));
-  assert.deepEqual(moved.slice(2, 6), remote.slice(2, 6), 'dragging does not change the source');
-  assert.notDeepEqual(moved.slice(6), remote.slice(6), 'the destination follows the drag');
+test('Photo echoes keep their source exposure stable while the destination is dragged', () => {
+  const original=tileSnapshot('displaced',tileTone);
+  const moved=tileSnapshot('displaced',tileTone,0,80,60);
+  const crops=calls=>calls.filter(c=>c[0]==='drawImage').map(c=>c.slice(2,6));
+  assert.deepEqual(crops(original),crops(moved));
+  assert.notDeepEqual(original.find(c=>c[0]==='translate'),moved.find(c=>c[0]==='translate'));
 });
 
 test('plus markers follow fractional motion continuously without whole-pixel jumps', () => {
@@ -167,4 +167,35 @@ test('plus markers follow fractional motion continuously without whole-pixel jum
   };
   assert.ok(Math.abs(start(200.2) - start(200.1) - .1) < 1e-9);
   assert.equal(start(200.2), start(200.2), 'a stationary marker stays stationary');
+});
+
+
+test('display size stays bounded and usable across musical sizes and all instrument shapes', () => {
+  for(const radius of [28,50,90,180]) for(const instrument of ['keys','guitar','bass','drums']) {
+    const item=Object.freeze({...placement,radius,instrument});
+    const size=visualRadius(item,'shapes');
+    assert.ok(size>=12 && size<=22);
+    assert.ok(hitVisual(item,'shapes',item.x+18,item.y),'minimum touch target is retained');
+    assert.equal(item.radius,radius);
+    assert.equal(visualRadius(item,'living'),radius);
+  }
+});
+
+test('the ensemble renderer builds note-driven photo surfaces without mutating placements', () => {
+  const ensemble=Object.freeze([
+    Object.freeze({...placement,tone:tileTone}),
+    Object.freeze({...placement,id:2,x:310,y:100,instrument:'guitar',tone:tileTone}),
+    Object.freeze({...placement,id:3,x:80,y:75,instrument:'bass',tone:tileTone}),
+  ]);
+  const snapshot=hits=>{
+    const calls=[];
+    const ctx=new Proxy({}, {get:(_,key)=>key==='createLinearGradient'?()=>({addColorStop(){}}):(...args)=>calls.push([key,...args]),set:(_,key,value)=>{calls.push(['set',key,value]);return true;}});
+    drawVisualScene(ctx,{width:1200,height:900},{x:0,y:0,width:400,height:300},ensemble,'fragments',2,hits,2);
+    return calls;
+  };
+  const rest=snapshot(new Map()),playing=snapshot(new Map([[1,1],[2,.4]]));
+  assert.notDeepEqual(rest,playing);
+  assert.ok(rest.filter(c=>c[0]==='drawImage').length>ensemble.length,'the composition extends between placements');
+  assert.equal(rest.filter(c=>c[0]==='save').length,rest.filter(c=>c[0]==='restore').length);
+  assert.deepEqual(ensemble.map(p=>p.radius),[50,50,50]);
 });

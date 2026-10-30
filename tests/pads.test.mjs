@@ -107,8 +107,9 @@ test('live photo hits use every selected visual style and never paint pad labels
     drawPadHit(ctx, {}, {x:0,y:0,width:400,height:300}, {pad:0,started:0}, .2, 1, mode);
     assert.ok(calls.some(c=>c[0]==='clip'),mode);
     assert.equal(calls.some(c=>c[0]==='fillText'||c[0]==='strokeRect'),false,mode);
-    if(mode==='quilt')assert.equal(calls.filter(c=>c[0]==='fillRect').length,1);
+    if(mode==='quilt')assert.equal(calls.filter(c=>c[0]==='fillRect').length,0);
     if(mode==='shapes')assert.equal(calls.some(c=>c[0]==='drawImage'),false);
-    if(mode==='collage'||mode==='displaced')assert.equal(calls.filter(c=>c[0]==='drawImage').length,1);
+    if(mode==='collage')assert.equal(calls.filter(c=>c[0]==='drawImage').length,6);
+    if(mode==='displaced')assert.equal(calls.filter(c=>c[0]==='drawImage').length,2);
   }
 });

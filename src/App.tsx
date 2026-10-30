@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { sampleAverageColor } from './color';
 import { composeImage, arrangePhotoMusic, type ArpMode, DEFAULT_LOOP_THEORY, LOOP_SCALES, type LoopTheory } from './composition';
 import { photoBounds, recordingSize, moveCircle, type Motion } from './scene';
-import { drawVisual, drawPlacementMarker, showsPlacementMarker, findDraggablePlacement, VISUAL_MODES, type VisualMode } from './visuals';
+import { drawVisualScene, drawPlacementMarker, showsPlacementMarker, findDraggablePlacement, VISUAL_MODES, type VisualMode } from './visuals';
 import { createPhotoLoop } from './arrangement';
 import { EditHistory } from './history';
 import { PlaybackRecovery } from './playback';
@@ -27,9 +27,11 @@ function VisualPreview({ mode, image, tone }: { mode: VisualMode; image: HTMLIma
     if (!image) return;
     const bounds = photoBounds(320, 176, image.naturalWidth, image.naturalHeight);
     ctx.drawImage(image, bounds.x, bounds.y, bounds.width, bounds.height);
-    const placement: Placement = { id: 1, x: 160, y: 88, radius: Math.min(64, bounds.width * 0.4),
+    const placement: Placement = { id: 1, x: 160, y: 88, radius: Math.min(38, bounds.width * .18),
       instrument: 'keys', level: 1, tone: tone ?? { hue: 35, saturation: 0.5, brightness: 0.5, texture: 0.5 } };
-    drawVisual(ctx, image, bounds, placement, mode, 0, 0, '#8be9fd');
+    const ensemble: Placement[] = [placement, { ...placement, id: 2, x: bounds.x + bounds.width * .23, y: bounds.y + bounds.height * .65, radius: placement.radius * .85, instrument: 'guitar' },
+      { ...placement, id: 3, x: bounds.x + bounds.width * .77, y: bounds.y + bounds.height * .3, radius: placement.radius * .95, instrument: 'bass' }];
+    drawVisualScene(ctx, image, bounds, ensemble, mode, 0, new Map([[1,.45],[2,.15]]));
     if (showsPlacementMarker(mode)) drawPlacementMarker(ctx, bounds, placement, '#8be9fd');
   }, [mode, image, tone]);
   return <canvas ref={ref} width={320} height={176} className="visualPreview" aria-hidden="true" />;
@@ -281,11 +283,8 @@ export default function App() {
     const renderVisuals = (target: CanvasRenderingContext2D, scale: number) => {
       padHitsRef.current.forEach(hit => drawPadHit(target, photo,
         { x: dx / dpr, y: dy / dpr, width: dw / dpr, height: dh / dpr }, hit, now / 1000, scale, visualModeRef.current));
-      drawnPlacements.forEach(placement => {
-      const color = INSTRUMENTS.find(item => item.id === placement.instrument)!.color;
-      drawVisual(target, photo, { x: dx / dpr, y: dy / dpr, width: dw / dpr, height: dh / dpr },
-        placement, visualModeRef.current, visualTime, visualHitsRef.current.get(placement.id) ?? 0, color, scale);
-      });
+      drawVisualScene(target, photo, { x: dx / dpr, y: dy / dpr, width: dw / dpr, height: dh / dpr },
+        drawnPlacements, visualModeRef.current, visualTime, visualHitsRef.current, scale);
       if (showsPlacementMarker(visualModeRef.current)) drawnPlacements.forEach(placement => drawPlacementMarker(target,
         { x: dx / dpr, y: dy / dpr, width: dw / dpr, height: dh / dpr }, placement,
         INSTRUMENTS.find(item => item.id === placement.instrument)!.color, scale));

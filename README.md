@@ -13,6 +13,25 @@ Built with React, TypeScript, Canvas, Pointer Events and Web Audio; no backend r
 There is no finger-controlled Play image mode. Placing a circle adds an autonomous part.
 The existing sample-pad instrument remains available under Sample pads.
 
+## Visual compositions
+
+Living Photo retains its soft refraction and placement markers. Instrument Shapes are
+compact display marks (12–22 px radius) with usable touch targets; this display scale
+never changes the musical radius, sampled pixels, volume or composition.
+
+The other treatments build a shared scene across placed instruments:
+
+- Photo Score: photographic cuts and curved image surfaces link the placed ensemble.
+- Silk Waves: three fine refracted bands catch each note.
+- Prism: small facets and broader photo planes connect the placements.
+- Photo Echoes: two layered exposures bring another region of the image into the composition.
+- Contour Ink: fine lines use local color and the sampled light contour.
+
+Note hits drive the visual response; placement motion carries it through the image.
+Connective surfaces are decorative: the actual instrument pieces remain the drag/remove
+targets. Style previews show a small ensemble. The same scene renderer is used for
+screen playback and video export. Live pad hits use the matching individual treatment.
+
 ## Live sample layers
 
 Keep a placed ensemble running and switch to Sample pads to add independent layers.
