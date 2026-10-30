@@ -834,3 +834,112 @@ test('Keys and Guitar partials start and finish at zero across all image styles'
     }
   }
 });
+
+test('scale and octave edits wait for a beat and fade old tonal voices to zero without touching drums', async()=>{
+  const engine=new ChordEngine();
+  engine.setComposition({...composeImage([cell]),tonic:0,style:'plucked',progression:[0],swing:0});
+  engine.setLoopTheory({key:0,scale:'major',octave:0,range:2});
+  engine.configure({tempo:120,keysArp:'up',keysArpRate:1,fourOnFloor:true});
+  await engine.playPlacements([placement,{...placement,id:2,instrument:'drums',tone:{...cell,brightness:.1}}]);
+  const context=Context.instances.at(-1);
+  const oldTones=[...engine.tonalVoices];
+  const kick=context.oscillators.find(osc=>!engine.tonalVoices.has(osc));
+  const kickEnvelope=structuredClone(kick.connections[0].gain.events), kickStop=kick.stopTime;
+  advanceAudio(engine,context,.1);
+  engine.setLoopTheory({key:0,scale:'minor',octave:1,range:2});
+  assert.equal(engine.theory.scale,'major');
+  assert.equal(engine.theory.octave,0);
+  advanceAudio(engine,context,.3);
+  assert.equal(engine.theory.octave,0,'offbeat notes still use the old setting');
+  advanceAudio(engine,context,.45);
+  assert.equal(engine.theory.scale,'minor');
+  assert.equal(engine.theory.octave,1);
+  assert.equal(engine.step,3,'the clock was not restarted');
+  for(const [source,gain] of oldTones) {
+    const end=gain.gain.events.at(-1);
+    assert.equal(end.kind,'linear');assert.equal(end.value,0);
+    assert.ok(Math.abs(end.time-.52)<1e-9);
+    assert.ok(gain.gain.heldAt<end.time);
+    assert.ok(source.stopTime>end.time,'stop happens after silence, not at nonzero amplitude');
+  }
+  assert.deepEqual(kick.connections[0].gain.events,kickEnvelope);
+  assert.equal(kick.stopTime,kickStop,'percussion envelope is untouched');
+  const fresh=context.oscillators.filter(osc=>Math.abs(osc.startTime-.52)<1e-9&&engine.tonalVoices.has(osc));
+  assert.ok(fresh.length>0);
+  assert.ok(fresh[0].connections[0].connections[0].gain.events[1].time-fresh[0].startTime>=.059);
+  for(const osc of fresh) {
+    const envelope=osc.connections[0].connections[0].gain.events;
+    assert.equal(envelope[0].value,0);
+    assert.ok(envelope[1].time-osc.startTime>=.03,'even short upper partials ease into the changed harmony');
+  }
+});
+
+test('rapid theory choices coalesce; reverting or changing range does not fade notes unnecessarily', async()=>{
+  const engine=new ChordEngine();
+  const original={key:0,scale:'major',octave:0,range:2};
+  engine.setLoopTheory(original);
+  await engine.playPlacements([placement]);
+  const voices=[...engine.tonalVoices.values()];
+  const curves=voices.map(gain=>structuredClone(gain.gain.events));
+  engine.setLoopTheory({...original,octave:1});
+  engine.setLoopTheory({...original,scale:'dorian',octave:-1});
+  assert.equal(engine.pendingTheory.scale,'dorian');
+  assert.equal(engine.pendingTheory.octave,-1);
+  engine.setLoopTheory({...original,range:3});
+  assert.equal(engine.pendingTheory,null);
+  assert.equal(engine.theory.range,3);
+  assert.deepEqual(voices.map(gain=>gain.gain.events),curves);
+  engine.setLoopTheory({...original,scale:'minor',octave:1});
+  engine.stop(.12,true);
+  assert.equal(engine.pendingTheory,null);
+  assert.equal(engine.theory.scale,'minor');
+  assert.equal(engine.theory.octave,1,'resume keeps the latest requested setting');
+});
+
+test('a theory handoff revoices melodic sample layers without shifting their loop or restarting drums', async()=>{
+  await withSampleKit(async(engine,context)=>{
+    engine.setLoopTheory({key:0,scale:'major',octave:0,range:2});
+    await engine.playPlacements([placement]);
+    await engine.toggleSampleLoop(0,placement,4,()=>true,4);
+    await engine.toggleSampleLoop(12,{...placement,instrument:'drums'},4,()=>true,4);
+    advanceAudio(engine,context,2.1);
+    const start=engine.sampleLoops.get(0).startStep;
+    const old=engine.sampleVoices.filter(voice=>voice.index===0);
+    const drum=engine.sampleVoices.find(voice=>voice.index===12);
+    const drumEnvelope=structuredClone(drum.gain.gain.events);
+    engine.setLoopTheory({key:0,scale:'minor',octave:1,range:2});
+    advanceAudio(engine,context,2.45);
+    assert.equal(engine.sampleLoops.get(0).startStep,start);
+    assert.equal(engine.sampleLoops.get(0).everySteps,8);
+    const newVoices=engine.sampleVoices.filter(voice=>voice.index===0&&!old.includes(voice));
+    assert.ok(newVoices.length>0,'sustaining melodic layers get their new harmony at the handoff');
+    for(const voice of newVoices) {
+      assert.ok(Math.abs(voice.source.startTime-2.52)<1e-9);
+      assert.ok(voice.gain.gain.events[1].time-voice.source.startTime>=.059);
+    }
+    for(const voice of old) assert.equal(voice.gain.gain.events.at(-1).value,0);
+    assert.deepEqual(drum.gain.gain.events,drumEnvelope);
+    assert.equal(drum.source.stopTime,undefined);
+    assert.deepEqual(engine.sampleLoopIndices,[0,12]);
+  });
+});
+
+test('a scale change silences old queued phrase notes and handles the gain-hold fallback', async()=>{
+  await withSampleKit(async(engine,context)=>{
+    engine.setLoopTheory({key:0,scale:'major',octave:0,range:2});
+    await engine.playSample(5,{...placement,instrument:'guitar'});
+    const voices=[...engine.sampleVoices];
+    const delayed=voices.filter(voice=>voice.source.startTime>.1);
+    assert.ok(delayed.length>0);
+    voices.forEach(voice=>{voice.gain.gain.cancelAndHoldAtTime=undefined;});
+    context.currentTime=.1;
+    engine.setLoopTheory({key:0,scale:'minor',octave:1,range:2});
+    assert.equal(engine.pendingTheory,null,'one-shot tails do not wait on a nonexistent loop clock');
+    for(const voice of delayed) {
+      assert.ok(voice.source.stopTime<voice.source.startTime);
+      assert.equal(voice.gain.gain.events.at(-1).value,0);
+      assert.equal(voice.timer,undefined);
+    }
+    assert.equal(engine.theory.scale,'minor');
+  });
+});

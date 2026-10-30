@@ -68,10 +68,46 @@ type TimbreBinding = { filter: BiquadFilterNode; colourGain: GainNode; cutoff: n
 
 export class ChordEngine {
   private theory: LoopTheory = { ...DEFAULT_LOOP_THEORY };
+  private pendingTheory: LoopTheory | null = null;
+  private theoryFadeUntil = 0;
+  private theoryRetriggers = new Set<number>();
+  private tonalVoices = new Map<AudioScheduledSourceNode, GainNode>();
   private loopPhrases = new Map<number, { anchor: ImageTone; tone: ImageTone; score: LoopScore; boundary: number;
     lane: number; previous?: number }>();
 
-  setLoopTheory(theory: LoopTheory) { this.theory = { ...theory }; }
+  setLoopTheory(theory: LoopTheory) {
+    const pitchChanged = theory.key !== this.theory.key || theory.scale !== this.theory.scale || theory.octave !== this.theory.octave;
+    if (!pitchChanged || !this.running || (!this.placements.length && !this.hasSampleLoops && !this.tonalVoices.size)) {
+      this.theory = { ...theory }; this.pendingTheory = null; return;
+    }
+    this.pendingTheory = { ...theory };
+    // A ringing one-shot has no transport to wait for; crossfade it directly.
+    if (!this.placements.length && !this.hasSampleLoops) this.applyTheoryChange(this.context!.currentTime + .06);
+  }
+
+  private applyTheoryChange(at: number) {
+    if (!this.pendingTheory || !this.context) return;
+    const fadeStart = Math.max(this.context.currentTime, at - .06);
+    this.tonalVoices.forEach((gain, source) => {
+      const start = this.sourceStarts.get(source) ?? 0;
+      // Preserve existing curves up to the fade, then reach exact silence.
+      if (typeof gain.gain.cancelAndHoldAtTime === 'function') gain.gain.cancelAndHoldAtTime(fadeStart);
+      else { const level = gain.gain.value; gain.gain.cancelScheduledValues(fadeStart); gain.gain.setValueAtTime(level, fadeStart); }
+      if (start >= fadeStart) gain.gain.setValueAtTime(0, fadeStart);
+      gain.gain.linearRampToValueAtTime(0, at);
+      try { source.stop(at + .005); } catch {}
+    });
+    this.sampleVoices.forEach(voice => {
+      if (voice.repeating && this.sampleLoops.has(voice.index) && this.tonalVoices.has(voice.source) && (this.sourceStarts.get(voice.source) ?? 0) < at)
+        this.theoryRetriggers.add(voice.index);
+      if (this.tonalVoices.has(voice.source) && (this.sourceStarts.get(voice.source) ?? 0) >= at && voice.timer !== undefined) {
+        window.clearTimeout(voice.timer); this.hitTimers.delete(voice.timer); voice.timer = undefined;
+      }
+    });
+    this.theory = this.pendingTheory;
+    this.pendingTheory = null;
+    this.theoryFadeUntil = at + .06;
+  }
 
   private circlePhrase(placement: Placement, response: boolean) {
     const boundary = Math.floor(this.step / 16);
@@ -257,7 +293,7 @@ export class ChordEngine {
     filter.frequency.value = 1800 + placement.tone.brightness * 11000;
     const peak = (0.58 + placement.tone.saturation * 0.18) * level;
     gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.linearRampToValueAtTime(peak, now + .006);
+    gain.gain.linearRampToValueAtTime(peak, now + (instrument === 'drums' ? .006 : Math.max(.006, this.theoryFadeUntil - now)));
     source.connect(filter); filter.connect(gain); gain.connect(this.sampleMix.get(instrument)!);
     const voice: (typeof this.sampleVoices)[number] = { source, gain, index, repeating };
     this.sampleVoices.push(voice);
@@ -265,7 +301,7 @@ export class ChordEngine {
       filter.disconnect();
       if (voice.timer !== undefined) { window.clearTimeout(voice.timer); this.hitTimers.delete(voice.timer); }
       this.sampleVoices = this.sampleVoices.filter(item => item !== voice);
-    }, false);
+    }, false, instrument);
     source.start(now);
     if (!notify) return;
     const wait = (now - this.context.currentTime) * 1000;
@@ -450,6 +486,7 @@ export class ChordEngine {
       this.activeSources = [];
       this.sampleVoices = [];
       this.placedVoices.clear();
+      this.tonalVoices.clear(); this.theoryFadeUntil = 0;
       this.timbreBindings.clear();
       const AudioContextClass = window.AudioContext ||
         (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -544,7 +581,7 @@ export class ChordEngine {
     // sound like a tick on bright notes. Use a gentler linear attack and
     // finish at actual silence before disconnecting the oscillator.
     if (frequency >= Math.min(14000, this.context.sampleRate * 0.45)) return;
-    attack = Math.min(duration * .45, Math.max(.012, attack));
+    attack = Math.min(duration * .45, Math.max(.012, attack, this.soundingPlacement?.instrument === 'drums' ? 0 : this.theoryFadeUntil - this.noteTime));
     volume /= Math.sqrt(1 + Math.pow(frequency / 5500, 4));
     const now = this.noteTime;
     const osc = this.context.createOscillator();
@@ -589,13 +626,15 @@ export class ChordEngine {
     });
   }
 
-  private trackSource(source: AudioScheduledSourceNode, gain: GainNode, start: number, cleanup = () => {}, placed = true) {
+  private trackSource(source: AudioScheduledSourceNode, gain: GainNode, start: number, cleanup = () => {}, placed = true, instrument: Instrument = this.soundingPlacement?.instrument ?? 'keys') {
     if (placed) this.placedVoices.add(source);
+    if (instrument !== 'drums') this.tonalVoices.set(source, gain);
     this.sourceStarts.set(source, start);
     this.activeSources.push(source);
     this.activeGains.push(gain);
     source.onended = () => {
       this.placedVoices.delete(source);
+      this.tonalVoices.delete(source);
       cleanup();
       this.activeSources = this.activeSources.filter(item => item !== source);
       this.activeGains = this.activeGains.filter(item => item !== gain);
@@ -653,7 +692,7 @@ export class ChordEngine {
     }
     osc.start(now);
     osc.stop(now + 0.28);
-    this.trackSource(osc, gain, now);
+    this.trackSource(osc, gain, now, () => {}, true, 'drums');
   }
 
   private noise(volume: number, bright: boolean, open = false, send = 0) {
@@ -681,7 +720,7 @@ export class ChordEngine {
       sendGain.connect(this.delay);
     }
     source.start(now);
-    this.trackSource(source, gain, now);
+    this.trackSource(source, gain, now, () => filter.disconnect(), true, 'drums');
   }
 
   private snare(volume: number, saturation: number, send: number) {
@@ -693,6 +732,7 @@ export class ChordEngine {
     if ((!this.placements.length && !this.hasSampleLoops) || !this.running) return [];
     this.scheduledTime = atTime ?? this.context!.currentTime;
     this.advanceShuffle(this.scheduledTime);
+    if (this.pendingTheory && this.step % 2 === 0) this.applyTheoryChange(this.scheduledTime);
     this.transportFrames.push({ step: this.step, time: this.scheduledTime });
     if (this.transportFrames.length > 128) this.transportFrames.shift();
     this.soundingPlacement = null;
@@ -711,10 +751,11 @@ export class ChordEngine {
       const active = PHOTO_PADS[index].instrument === 'drums'
         ? sampleDrumStep(index, this.step, this.controls.fourOnFloor, this.controls.drumDensity)
         : (this.step - loop.startStep) % loop.everySteps === 0;
-      if (this.step >= loop.startStep && active) {
+      if (this.step >= loop.startStep && (active || this.theoryRetriggers.has(index))) {
         this.startSample(index, loop.placement, this.scheduledTime!, true);
       }
     });
+    this.theoryRetriggers.clear();
     const groups = (instrument: Instrument) => this.placements.filter(p => p.instrument === instrument);
     const keys = groups('keys'), guitars = groups('guitar'), bass = groups('bass'), drums = groups('drums');
 
@@ -861,6 +902,8 @@ export class ChordEngine {
   }
 
   stop(release = 0.12, preserveSampleLoops = false) {
+    if (this.pendingTheory) { this.theory = this.pendingTheory; this.pendingTheory = null; }
+    this.theoryFadeUntil = 0; this.tonalVoices.clear(); this.theoryRetriggers.clear();
     this.cancelShuffle(); this.placedVoices.clear();
     this.loopPhrases.clear();
     this.transportFrames = [];

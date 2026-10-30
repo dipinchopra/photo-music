@@ -42,7 +42,7 @@ and Sample pads keeps both kinds of loop running. A new photo starts a fresh ses
 - Moving circles keep their rhythm identity. Significant region changes gradually develop their notes at two-bar boundaries. Continuous image sampling still changes the timbre of sounding notes.
 - Bass supports the common harmony; percussion uses phrase-sampled regional character. Four-on-the-floor is optional and starts off.
 - Shuffle varies photo-derived harmony and ensemble without enabling automatic arpeggios. Explicit arpeggiator controls remain available.
-- Music settings preserve the clock. Key, scale and octave affect the next notes; melodic range shapes the next phrase. Settings persist through Shuffle and photo changes until changed explicitly.
+- Music settings preserve the clock. Key, scale and octave change on the next beat: old pitched voices fade to zero and new voices ease in. Active melodic sample layers revoice without resetting their repeat grid; percussion keeps playing. Melodic range shapes the next phrase. Settings persist through Shuffle and photo changes until changed explicitly.
 
 ## Run and verify
 

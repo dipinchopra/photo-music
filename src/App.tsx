@@ -902,7 +902,7 @@ export default function App() {
           </select></label>
           <label><span>Melodic range</span><select value={loopTheory.range} onChange={event => setLoopTheory(current => ({ ...current, range: Number(event.target.value) }))}>
             <option value={1}>Narrow · 1 octave</option><option value={2}>Open · 2 octaves</option><option value={3}>Wide · 3 octaves</option>
-          </select><small>Shapes the next phrase. Key, scale and octave apply on the next notes.</small></label>
+          </select><small>Range shapes the next phrase. Key, scale and octave change smoothly on the next beat.</small></label>
         </div>}
         {sheet === 'visuals' && <div className="visualChoices">
           <div className="visualModeList" role="group" aria-label="Visual styles · scroll for more">
