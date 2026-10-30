@@ -663,7 +663,7 @@ export class ChordEngine {
       const active = arpeggiating ? this.step % this.controls.keysArpRate === 0 : melody.active;
       if (!active || !this.controls.keys || keyAttacks >= 2 || (!arpeggiating && previous && this.step - previous.step < 2)) continue;
       const degree = arpeggiating
-        ? arpeggioDegree(root, this.step, this.controls.keysArp, this.controls.keysArpRate, Math.floor(placement.tone.hue / 90) + lane)
+        ? arpeggioDegree(root, this.step, this.controls.keysArp, this.controls.keysArpRate, Math.floor(motif.anchor.hue / 90) + motif.lane)
         : loopMelodyDegree(root, melody, this.step, motif.previous, this.theory.range);
       motif.previous = degree;
       const register = motif.tone.brightness > 0.68 ? 36 : 24;
@@ -675,7 +675,7 @@ export class ChordEngine {
       const secondsPerStep = 60 / this.controls.tempo / 2;
       const duration = arpeggiating ? secondsPerStep * this.controls.keysArpRate * (0.5 + this.controls.keysSustain * 0.35)
         : Math.max(0.35, melody.hold * secondsPerStep * (0.7 + this.controls.keysSustain * 0.4));
-      this.voice(hz(pitch), 0.085 * placement.level * melody.accent / Math.sqrt(Math.min(keys.length, 3)),
+      this.voice(hz(pitch), 0.085 * placement.level * (arpeggiating ? (this.step % 8 === 0 ? .86 : .7) : melody.accent) / Math.sqrt(Math.min(keys.length, 3)),
         duration, this.controls.keysTone * .25 + placement.tone.saturation * .3 + placement.tone.brightness * .45,
         0.02 + (1 - this.controls.keysTone) * 0.04, this.controls.keysDelay * 0.55);
     }
@@ -695,10 +695,10 @@ export class ChordEngine {
       const base = loopMelodyDegree(root, event, this.step, motif.previous, this.theory.range);
       motif.previous = base;
       const degrees = arpeggiating
-        ? [arpeggioDegree(root, this.step, this.controls.guitarArp, this.controls.guitarArpRate, Math.floor(placement.tone.hue / 90) + lane)]
+        ? [arpeggioDegree(root, this.step, this.controls.guitarArp, this.controls.guitarArpRate, Math.floor(motif.anchor.hue / 90) + motif.lane)]
         : placement.radius > 65 && beat % 4 === 0 ? [base, base + 2] : [base];
       degrees.forEach((degree, index) => {
-        const volume = 0.065 * placement.level * event.accent / Math.sqrt(Math.min(guitars.length, 3) * degrees.length);
+        const volume = 0.065 * placement.level * (arpeggiating ? (this.step % 8 === 0 ? .8 : .65) : event.accent) / Math.sqrt(Math.min(guitars.length, 3) * degrees.length);
         const duration = arpeggiating ? 30 / this.controls.tempo * this.controls.guitarArpRate * 0.75
           : Math.max(.22, event.hold * 30 / this.controls.tempo * (.55 + this.controls.guitarStrum * .4));
         this.voice(noteAt(degree, 24), volume, duration,

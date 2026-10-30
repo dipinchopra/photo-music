@@ -635,3 +635,48 @@ test('keys and guitar answer each other and image contour affects rendered notes
   assert.deepEqual(forward.steps,backward.steps,'only contour direction changes');
   assert.notDeepEqual(forward.frequencies,backward.frequencies,'spatial differences must reach the synthesizer');
 });
+
+test('every arp tick has an audible envelope through phrase rests, in both instruments and all patterns', async () => {
+  for (const instrument of ['keys','guitar']) for (const mode of ['up','down','upDown']) for (const rate of [1,2]) {
+    const engine=new ChordEngine();
+    engine.setComposition({...composeImage([cell]),style:'plucked',progression:[0]});
+    engine.configure({[`${instrument}Arp`]:mode,[`${instrument}ArpRate`]:rate});
+    await engine.playPlacements([{...placement,instrument}]);
+    const context=Context.instances.at(-1);
+    for(let step=1;step<64;step++) {
+      const before=context.oscillators.length;
+      engine.pulse();
+      const voices=context.oscillators.slice(before);
+      assert.equal(voices.length>0,step%rate===0,`${instrument} ${mode} step ${step}`);
+      for(const osc of voices) {
+        const filter=osc.connections[0], gain=filter.connections[0];
+        const peak=gain.gain.events.find(event=>event.kind==='exponential');
+        assert.ok(peak.value>.001,`${instrument} ${mode}: arp step ${step} must have a real attack, including phrase rests`);
+      }
+    }
+  }
+});
+
+test('motion changes arp timbre without changing its phase, and switching off returns to the motif', async () => {
+  const render=async moving=>{
+    const engine=new ChordEngine();
+    engine.setComposition({...composeImage([cell]),style:'plucked',progression:[0]});
+    engine.configure({keysArp:'upDown',keysArpRate:1});
+    await engine.playPlacements([placement]);
+    const context=Context.instances.at(-1);
+    for(let step=1;step<16;step++) {
+      if(moving) engine.updatePlacements([{...placement,tone:{...cell,hue:step%2?260:5}}]);
+      engine.pulse();
+    }
+    const frequencies=context.oscillators.map(n=>n.frequency.value);
+    engine.configure({keysArp:'off'});
+    let silentSteps=0;
+    for(let step=16;step<32;step++) {
+      const before=context.oscillators.length; engine.pulse();
+      if(before===context.oscillators.length) silentSteps++;
+    }
+    assert.ok(silentSteps>0,'turning arp off restores motif rests');
+    return frequencies;
+  };
+  assert.deepEqual(await render(true),await render(false));
+});
