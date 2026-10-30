@@ -364,9 +364,11 @@ test('bright Place Loops partials have softened attacks and stay below the outpu
     const filter = osc.connections[0];
     assert.ok(filter.frequency.value <= context.sampleRate * .45);
     const events = filter.connections[0].gain.events;
-    assert.equal(events[0].value, .0001);
-    assert.ok(events[1].time - osc.startTime >= .008, 'upper partials must not have click-like 2ms attacks');
-    assert.equal(events.at(-1).value, .0001);
+    assert.equal(events[0].value, 0);
+    assert.equal(events[1].kind, 'linear');
+    assert.ok(events[1].time - osc.startTime >= .012, 'upper partials need a gradual rise, not a steep exponential attack');
+    assert.equal(events.at(-1).value, 0);
+    assert.ok(events.at(-1).time < osc.stopTime);
   }
   const before = context.oscillators.length;
   engine.tone(context.sampleRate * .48, .1, .3, 'sine', 12000, .002);
@@ -650,8 +652,8 @@ test('every arp tick has an audible envelope through phrase rests, in both instr
       assert.equal(voices.length>0,step%rate===0,`${instrument} ${mode} step ${step}`);
       for(const osc of voices) {
         const filter=osc.connections[0], gain=filter.connections[0];
-        const peak=gain.gain.events.find(event=>event.kind==='exponential');
-        assert.ok(peak.value>.001,`${instrument} ${mode}: arp step ${step} must have a real attack, including phrase rests`);
+        const peak=Math.max(...gain.gain.events.map(event=>event.value));
+        assert.ok(peak>.001,`${instrument} ${mode}: arp step ${step} must have a real attack, including phrase rests`);
       }
     }
   }
@@ -810,4 +812,25 @@ test('the full live bank can launch together without stealing the first layers',
     assert.ok(engine.sampleVoices.every(voice=>voice.source.stopTime===undefined),'initial layers must not be stolen');
     assert.ok(context.bufferSources.filter(source=>source.buffer?.original).every(source=>source.startTime>=.02));
   });
+});
+
+test('Keys and Guitar partials start and finish at zero across all image styles', async()=>{
+  for(const style of ['ambient','glass','plucked','pulse']) for(const guitar of [false,true]) {
+    const engine=new ChordEngine();
+    engine.setComposition({...composeImage([cell]),style});
+    await engine.unlock();
+    const context=Context.instances.at(-1);
+    engine.voice(440,.1,.35,.9,.002,0,guitar);
+    assert.ok(context.oscillators.length>0);
+    for(const osc of context.oscillators) {
+      const envelope=osc.connections[0].connections[0].gain.events;
+      assert.equal(envelope[0].value,0);
+      assert.equal(envelope[0].time,osc.startTime);
+      assert.equal(envelope[1].kind,'linear');
+      assert.ok(envelope[1].time-osc.startTime>=.012);
+      assert.equal(envelope.at(-1).kind,'linear');
+      assert.equal(envelope.at(-1).value,0);
+      assert.ok(envelope.at(-1).time<osc.stopTime,'the source stops only after a silent tail');
+    }
+  }
 });

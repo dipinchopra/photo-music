@@ -540,10 +540,11 @@ export class ChordEngine {
   private tone(frequency: number, volume: number, duration: number, type: OscillatorType,
     cutoff: number, attack = 0.015, send = 0) {
     if (!this.context || !this.output) return;
-    // Short upper-partial attacks read as clicks on small speakers. Fade them
-    // in gently and omit partials too close to the output's Nyquist frequency.
+    // A short exponential attack concentrates its rise at the end and can
+    // sound like a tick on bright notes. Use a gentler linear attack and
+    // finish at actual silence before disconnecting the oscillator.
     if (frequency >= Math.min(14000, this.context.sampleRate * 0.45)) return;
-    attack = Math.max(0.008, Math.min(attack, duration * 0.45));
+    attack = Math.min(duration * .45, Math.max(.012, attack));
     volume /= Math.sqrt(1 + Math.pow(frequency / 5500, 4));
     const now = this.noteTime;
     const osc = this.context.createOscillator();
@@ -555,9 +556,10 @@ export class ChordEngine {
     osc.frequency.value = frequency;
     filter.type = 'lowpass';
     filter.frequency.value = Math.min(cutoff, this.context.sampleRate * 0.45);
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, volume), now + attack);
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(Math.max(0.0002, volume), now + attack);
     gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+    gain.gain.linearRampToValueAtTime(0, now + duration + .012);
     osc.connect(filter);
     filter.connect(gain);
     gain.connect(colourGain);
