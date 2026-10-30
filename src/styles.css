@@ -510,8 +510,6 @@ html, body, #root, .app, .app * {
 .visualChoices > small { color: #aaa; font-size: 10px; line-height: 1.5; }
 .liveMixControls { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 22px; }
 .liveMixControls label { display: flex; flex-direction: column; gap: 8px; }
-.sampleTriggerControls { display: flex; flex: 0 0 auto; gap: 4px; align-items: stretch; padding-right: 8px; border-right: 1px solid #ffffff15; }
-.instrumentDock .sampleTriggerControls button { flex: 0 0 auto; min-width: 64px; padding: 9px; }
 .liveMixControls select { width: 100%; padding: 8px; border: 1px solid #ffffff25; border-radius: 8px; background: #222; color: #eee; }
 .topbar > div:first-child { min-width: 0; }
 .headerActions { flex-shrink: 0; }
@@ -531,22 +529,23 @@ html, body, #root, .app, .app * {
 
 .theoryButton.active { --instrument-color: #f5f5f5; }
 
-.livePadBank { flex-shrink: 0; display: flex; flex-direction: column; gap: 8px; }
-.liveLayerHeading { display: flex; justify-content: space-between; gap: 12px; align-items: center; font-size: 12px; }
-.liveLayerHeading span, .livePadBank p { font-size: 11px; color: #999; }
-.livePadBank p { margin: 0; line-height: 1.4; }
-.livePadBank .sampleTriggerControls { border: 0; padding: 0; align-items: center; flex-wrap: wrap; }
-.livePadBank .sampleTriggerControls button { border: 1px solid #ffffff20; border-radius: 9px; background: #161616; padding: 8px 12px; font-size: 12px; min-height: 38px; }
-.livePadBank .sampleTriggerControls button.active { background: #eee; color: #111; }
-.livePadBank .sampleTriggerControls label { margin-left: auto; display: flex; gap: 6px; align-items: center; font-size: 11px; color: #aaa; }
-.livePadBank select { color: #eee; background: #222; border: 1px solid #ffffff25; border-radius: 7px; padding: 7px; font: inherit; }
-.livePadGrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; }
-.livePadGrid button { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 3px; min-height: 46px; padding: 7px 10px; background: #171717; border: 1px solid #ffffff18; border-radius: 9px; color: #ddd; touch-action: none; font: inherit; text-align: left; }
-.livePadGrid .instrumentGlyph { display: none; }
-.livePadGrid button > span { font-size: 12px; }
-.livePadGrid button small { font-size: 9px; color: #888; }
-.livePadGrid button.active { border-color: var(--instrument-color); background: color-mix(in srgb, var(--instrument-color) 10%, #111); }
-.livePadGrid button.active small { color: var(--instrument-color); }
-.livePadGrid button.queued, .livePadGrid button.stopping { border-style: dashed; }
-@media (max-height: 650px) { .app:has(.livePadBank) { overflow-y: auto; } .app:has(.livePadBank) .composer { flex: 1 0 150px; } .livePadBank p { display: none; } }
-@media (max-width: 450px) { .livePadGrid button { padding: 6px; } .livePadGrid button > span { font-size: 10px; } .livePadGrid button small { font-size: 8px; } .livePadBank .sampleTriggerControls button { padding: 7px 8px; font-size: 10px; } }
+/* The photo is the live instrument. Controls occupy only a small corner. */
+.livePhotoInterface { position: absolute; z-index: 3; pointer-events: none; }
+.livePhotoRegions { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); grid-template-rows: repeat(4,minmax(0,1fr)); width: 100%; height: 100%; pointer-events: auto; }
+.livePhotoRegion { position: relative; min-width: 0; min-height: 0; border: 0; border-radius: 0; padding: 0; background: transparent; touch-action: none; cursor: crosshair; color: #fff; }
+.livePhotoRegion:disabled { opacity: 1; cursor: wait; }
+.livePhotoRegion:focus-visible { outline: 1px solid var(--live-color); outline-offset: -4px; }
+.liveRegionCaption { position: absolute; left: 7px; right: 5px; bottom: 7px; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; opacity: 0; transition: opacity .18s; pointer-events: none; text-align: left; font-size: 10px; line-height: 1.2; text-shadow: 0 1px 5px #000,0 0 2px #000; }
+.liveRegionCaption small { font-size: 8px; color: var(--live-color); }
+.livePhotoRegion.playing .liveRegionCaption, .livePhotoRegion.queued .liveRegionCaption, .livePhotoRegion.stopping .liveRegionCaption, .livePhotoRegion:focus-visible .liveRegionCaption, .showSounds .liveRegionCaption { opacity: .9; }
+.showSounds .livePhotoRegion { box-shadow: inset 0 0 0 .5px #ffffff22; }
+@media (hover:hover) { .livePhotoRegion:hover .liveRegionCaption { opacity: .9; } }
+.liveImageControls { position: absolute; top: 8px; right: 8px; max-width: calc(100% - 16px); pointer-events: auto; }
+.liveControlsToggle { display: flex; gap: 12px; align-items: center; justify-content: space-between; border: 1px solid #ffffff30; border-radius: 22px; padding: 9px 12px; min-height: 36px; background: #111a; backdrop-filter: blur(14px); color: #eee; font-size: 11px; }
+.liveImageControlPanel { position: absolute; top: calc(100% + 7px); right: 0; width: 218px; max-width: calc(100vw - 50px); display: flex; flex-direction: column; gap: 10px; padding: 12px; overflow-y: auto; border: 1px solid #ffffff25; border-radius: 15px; background: #111e; backdrop-filter: blur(18px); color: #eee; box-shadow: 0 8px 25px #0005; }
+.liveImageControlPanel button, .liveImageControlPanel select { border: 1px solid #ffffff25; border-radius: 8px; padding: 8px; min-height: 36px; background: #ffffff08; color: #eee; font-size: 11px; }
+.liveImageControlPanel select:disabled { opacity: .4; }
+.liveImageControlPanel label { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11px; }
+.liveTriggerChoice { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+.liveImageControlPanel button[aria-pressed=true] { background: #eee; color: #111; }
+@media(max-width:450px) { .liveRegionCaption { left: 5px; bottom: 5px; font-size: 9px; } .liveRegionCaption small { font-size: 8px; } }

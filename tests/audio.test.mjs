@@ -943,3 +943,21 @@ test('a scale change silences old queued phrase notes and handles the gain-hold 
     assert.equal(engine.theory.scale,'minor');
   });
 });
+
+test('live image progress follows the audio clock and is read-only across swung beats',async()=>{
+  await withSampleKit(async(engine,context)=>{
+    engine.setComposition({...composeImage([cell]),swing:.2});
+    await engine.toggleSampleLoop(0,placement,4);
+    advanceAudio(engine,context,.27);
+    const step=engine.step,sources=context.bufferSources.length,frameCount=engine.transportFrames.length;
+    const first=engine.sampleLoopProgress.get(0);
+    assert.ok(first>0 && first<.125,'partway through the first swung eighth');
+    assert.equal(engine.step,step);assert.equal(context.bufferSources.length,sources);assert.equal(engine.transportFrames.length,frameCount);
+    advanceAudio(engine,context,.52);
+    assert.ok(Math.abs(engine.sampleLoopProgress.get(0)-.25)<1e-9);
+    const frozen=engine.sampleLoopProgress.get(0);
+    assert.equal(engine.sampleLoopProgress.get(0),frozen,'UI frames do not advance a frozen audio clock');
+    engine.clearSampleLoops();
+    assert.equal(engine.sampleLoopProgress.size,0);
+  });
+});

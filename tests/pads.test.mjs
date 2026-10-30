@@ -6,7 +6,7 @@ const encode = source => `data:text/javascript;base64,${Buffer.from(stripTypeScr
 const padsUrl = encode(readFileSync(new URL('../src/pads.ts', import.meta.url), 'utf8'));
 const { PHOTO_PADS, PAD_KEYS, SampleBank, photoPadAt, photoPadBounds, enterPhotoPad } = await import(padsUrl);
 const visualsUrl = encode(readFileSync(new URL('../src/visuals.ts', import.meta.url), 'utf8'));
-const { drawPadHit, PAD_EFFECT_SECONDS } = await import(encode(
+const { drawPadHit, PAD_EFFECT_SECONDS, drawLiveFeedback, updateLiveFeedback, LIVE_RELEASE_SECONDS } = await import(encode(
   readFileSync(new URL('../src/padVisuals.ts', import.meta.url), 'utf8').replace("'./pads'", JSON.stringify(padsUrl)).replace("'./visuals'", JSON.stringify(visualsUrl))));
 
 test('16 photo pads cover the photo once, with stable names and unique keys', () => {
@@ -112,4 +112,40 @@ test('live photo hits use every selected visual style and never paint pad labels
     if(mode==='collage')assert.equal(calls.filter(c=>c[0]==='drawImage').length,6);
     if(mode==='displaced')assert.equal(calls.filter(c=>c[0]==='drawImage').length,2);
   }
+});
+
+test('photo-layer feedback tracks queued, playing and ending states, then disappears',()=>{
+  const feedback=new Map(), states=[{index:0,status:'queued'}];
+  updateLiveFeedback(feedback,states,new Map(),10);
+  assert.equal(feedback.get(0).status,'queued');
+  updateLiveFeedback(feedback,states,new Map(),10.1);
+  assert.equal(feedback.get(0).changedAt,10);
+  updateLiveFeedback(feedback,[{index:0,status:'playing'}],new Map([[0,.4]]),11);
+  assert.equal(feedback.get(0).status,'playing');
+  assert.equal(feedback.get(0).changedAt,11);
+  assert.equal(feedback.get(0).progress,.4);
+  updateLiveFeedback(feedback,[],new Map(),12);
+  assert.equal(feedback.get(0).status,'ended');
+  assert.equal(feedback.get(0).progress,.4,'ending preserves the last visible position');
+  updateLiveFeedback(feedback,[],new Map(),12+LIVE_RELEASE_SECONDS+.001);
+  assert.equal(feedback.size,0);
+  assert.deepEqual(states,[{index:0,status:'queued'}],'audio state is never mutated');
+});
+
+test('live cues are clipped to their photo region, show progress and fade without a pad grid',()=>{
+  const snapshot=(status,progress,seconds=5)=>{
+    const calls=[];
+    const ctx=new Proxy({}, {get:(_,key)=>(...args)=>calls.push([key,...args]),set:(_,key,value)=>{calls.push(['set',key,value]);return true;}});
+    drawLiveFeedback(ctx,{x:20,y:30,width:400,height:600},5,{status,changedAt:5,progress},seconds,2);
+    return calls;
+  };
+  const playing=snapshot('playing',.5);
+  assert.ok(playing.some(call=>call[0]==='rect'&&call[1]===120&&call[2]===180&&call[3]===100&&call[4]===150));
+  assert.ok(playing.some(call=>call[0]==='scale'&&call[1]===2));
+  assert.ok(playing.some(call=>call[0]==='arc'&&call[4]===-Math.PI/2&&Math.abs(call[5]-Math.PI/2)<1e-9));
+  assert.equal(playing.some(call=>['fillText','fillRect','strokeRect'].includes(call[0])),false);
+  const queued=snapshot('queued',0);
+  assert.ok(queued.some(call=>call[0]==='setLineDash'&&call[1].length===2));
+  assert.equal(playing.filter(call=>call[0]==='save').length,playing.filter(call=>call[0]==='restore').length);
+  assert.equal(snapshot('ended',.5,5+LIVE_RELEASE_SECONDS+.01).length,0);
 });

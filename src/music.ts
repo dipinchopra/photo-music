@@ -161,6 +161,24 @@ export class ChordEngine {
       status: loop.stopStep !== undefined ? 'stopping' : loop.startStep > audibleStep ? 'queued' : 'playing' }));
   }
 
+  /** Read-only position for image feedback; the audio clock remains authoritative. */
+  get sampleLoopProgress(): ReadonlyMap<number, number> {
+    const result = new Map<number, number>();
+    if (!this.context) return result;
+    const now = this.context.currentTime, frame = this.transportFrameAt(now);
+    if (!frame) return result;
+    const next = this.transportFrames.find(item => item.step === frame.step + 1)?.time
+      ?? (this.step === frame.step + 1 ? this.nextStepTime : null);
+    const fraction = next !== null && next !== undefined && next > frame.time
+      ? Math.max(0, Math.min(1, (now - frame.time) / (next - frame.time))) : 0;
+    this.sampleLoops.forEach((loop,index) => {
+      const elapsed = Math.max(0, frame.step + fraction - loop.startStep);
+      const period = PHOTO_PADS[index].instrument === 'drums' ? 8 : loop.everySteps;
+      result.set(index, elapsed % period / period);
+    });
+    return result;
+  }
+
   private notifySampleLoops(at = this.context?.currentTime ?? 0) {
     if (!this.onSampleLoopChange) return;
     const wait = (at - (this.context?.currentTime ?? 0)) * 1000;

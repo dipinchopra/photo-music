@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { sampleAverageColor } from './color';
 import { composeImage, arrangePhotoMusic, type ArpMode, DEFAULT_LOOP_THEORY, LOOP_SCALES, type LoopTheory } from './composition';
-import { photoBounds, recordingSize, moveCircle, type Motion } from './scene';
+import { photoBounds, recordingSize, moveCircle, type Motion, type Bounds } from './scene';
 import { drawVisualScene, drawPlacementMarker, showsPlacementMarker, findDraggablePlacement, VISUAL_MODES, type VisualMode } from './visuals';
 import { createPhotoLoop } from './arrangement';
 import { EditHistory } from './history';
 import { PlaybackRecovery } from './playback';
 import { ChordEngine, type Instrument, type Placement, type ImageTone, type SampleLoopState } from './music';
 import { PHOTO_PADS, PAD_KEYS, photoPadAt, photoPadBounds, enterPhotoPad } from './pads';
-import { drawPadHit, PAD_EFFECT_SECONDS, type PadHit } from './padVisuals';
+import { drawPadHit, drawLiveFeedback, updateLiveFeedback, PAD_EFFECT_SECONDS, type PadHit, type LiveFeedback } from './padVisuals';
 
 const music = new ChordEngine();
 const INSTRUMENTS: Array<{ id: Instrument; label: string; color: string }> = [
@@ -66,6 +66,7 @@ export default function App() {
   const placementsRef = useRef<Placement[]>([]);
   const liveTouchesRef = useRef(new Map<number, number>());
   const padHitsRef = useRef(new Map<number, PadHit>());
+  const liveFeedbackRef = useRef(new Map<number, LiveFeedback>());
   const liveEpochRef = useRef(0);
   const beatRef = useRef<number | null>(null);
   const visualHitsRef = useRef(new Map<number, number>());
@@ -100,6 +101,29 @@ export default function App() {
   }, [sheet]);
 
   const [hasImage, setHasImage] = useState(false);
+  const [photoSize, setPhotoSize] = useState({ width: 0, height: 0 });
+  const [photoRegion, setPhotoRegion] = useState<Bounds | null>(null);
+  const [liveControlsOpen, setLiveControlsOpen] = useState(false);
+  const [showLiveSounds, setShowLiveSounds] = useState(false);
+  useEffect(() => {
+    if (!liveControlsOpen) return;
+    const dismiss = (event: KeyboardEvent) => { if (event.key === 'Escape') setLiveControlsOpen(false); };
+    window.addEventListener('keydown', dismiss);
+    return () => window.removeEventListener('keydown', dismiss);
+  }, [liveControlsOpen]);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !hasImage || !photoSize.width) return;
+    const measure = () => {
+      const rect = canvas.getBoundingClientRect();
+      const next = photoBounds(rect.width, rect.height, photoSize.width, photoSize.height);
+      setPhotoRegion(current => current && current.x === next.x && current.y === next.y
+        && current.width === next.width && current.height === next.height ? current : next);
+    };
+    const observer = new ResizeObserver(measure);
+    observer.observe(canvas); measure();
+    return () => observer.disconnect();
+  }, [hasImage, photoSize]);
   const [audioPaused, setAudioPaused] = useState(false);
   const [imageStyle, setImageStyle] = useState('');
   const [placements, setPlacements] = useState<Placement[]>([]);
@@ -227,7 +251,7 @@ export default function App() {
       setLoopPads(music.sampleLoopIndices); setLoopStates(music.sampleLoopStates);
       if (!music.hasSampleLoops && !placementsRef.current.length) stopBeat();
     };
-    music.onSampleHit = (pad, placement) => padHitsRef.current.set(pad, { pad, tone: placement.tone, started: performance.now() / 1000 });
+    music.onSampleHit = (pad, placement) => padHitsRef.current.set(pad, { pad, tone: placement.tone, started: performance.now() / 1000, loop: music.sampleLoopIndices.includes(pad) });
     const canvas = canvasRef.current;
     const prevent = (event: Event) => event.preventDefault();
     canvas?.addEventListener('touchstart', prevent, { passive: false });
@@ -285,6 +309,9 @@ export default function App() {
         { x: dx / dpr, y: dy / dpr, width: dw / dpr, height: dh / dpr }, hit, now / 1000, scale, visualModeRef.current));
       drawVisualScene(target, photo, { x: dx / dpr, y: dy / dpr, width: dw / dpr, height: dh / dpr },
         drawnPlacements, visualModeRef.current, visualTime, visualHitsRef.current, scale);
+      updateLiveFeedback(liveFeedbackRef.current, music.sampleLoopStates, music.sampleLoopProgress, now / 1000);
+      liveFeedbackRef.current.forEach((visual, index) => drawLiveFeedback(target,
+        { x: dx / dpr, y: dy / dpr, width: dw / dpr, height: dh / dpr }, index, visual, now / 1000, scale));
       if (showsPlacementMarker(visualModeRef.current)) drawnPlacements.forEach(placement => drawPlacementMarker(target,
         { x: dx / dpr, y: dy / dpr, width: dw / dpr, height: dh / dpr }, placement,
         INSTRUMENTS.find(item => item.id === placement.instrument)!.color, scale));
@@ -679,6 +706,8 @@ export default function App() {
     image.onload = () => {
       stopRecording();
       imageRef.current = image;
+      setPhotoSize({ width: image.naturalWidth, height: image.naturalHeight });
+      setLiveControlsOpen(false); liveFeedbackRef.current.clear();
       const toneCanvas = document.createElement('canvas');
       const toneScale = Math.min(1, 512 / Math.max(image.naturalWidth, image.naturalHeight));
       toneCanvas.width = Math.max(1, Math.round(image.naturalWidth * toneScale));
@@ -731,7 +760,7 @@ export default function App() {
       </div>
     </header>
     {audioPaused && <div className="recordMessage" role="status"><span>Audio paused</span><button onClick={() => void resumePlayback()}>Resume sound ▶</button></div>}
-    {hasImage && <div className="recordMessage"><span>{mode === 'live' ? 'Dusk · harmonized sample pads' : imageStyle}</span><span>{mode === 'live' ? (kitStatus === 'ready' ? (sampleTrigger === 'loop' ? `Loop · changes next ${launchBeats === 4 ? 'bar' : 'beat'}` : 'One-shot · tap or swipe') : kitStatus === 'error' ? 'Kit failed · tap Sample pads to retry' : 'Loading samples…') : `${controls.tempo} BPM`}</span></div>}
+    {hasImage && <div className="recordMessage"><span>{mode === 'live' ? 'Live image · layers' : imageStyle}</span><span>{mode === 'live' ? (kitStatus === 'ready' ? (sampleTrigger === 'loop' ? `Loop · changes next ${launchBeats === 4 ? 'bar' : 'beat'}` : 'One-shot · tap or swipe') : kitStatus === 'error' ? 'Kit failed · tap Live image to retry' : 'Loading samples…') : `${controls.tempo} BPM`}</span></div>}
     {recordError && <div className="recordMessage" role="alert">{recordError}</div>}
     {recordingUrl && <div className="recordMessage"><a href={recordingUrl} download={`image-music.${recordingType.includes('mp4') ? 'mp4' : 'webm'}`}>↓ Save recording</a><button onClick={() => { URL.revokeObjectURL(recordingUrl); setRecordingUrl(null); }}>Dismiss</button></div>}
 
@@ -819,13 +848,53 @@ export default function App() {
             if (drag) updatePlacements(drag.before, 0.12, false);
           }}
           onPointerLeave={(e) => { if (mode === 'live' && e.pointerType === 'mouse') stopLive(e.pointerId); }} />
+        {hasImage && mode === 'live' && photoRegion && <div className={`livePhotoInterface ${showLiveSounds ? 'showSounds' : ''}`}
+          style={{ left: photoRegion.x, top: photoRegion.y, width: photoRegion.width, height: photoRegion.height }}>
+          <div className="livePhotoRegions" role="group" aria-label="Play the photo · tap a region to add or remove a live layer">
+            {PHOTO_PADS.map((pad,index) => {
+              const status = loopStates.find(state => state.index === index)?.status;
+              return <button key={pad.file} className={`livePhotoRegion ${status ?? ''}`}
+                disabled={kitStatus !== 'ready'} aria-pressed={loopPads.includes(index)}
+                aria-label={`${sampleTrigger === 'once' ? 'Play' : status === 'queued' ? 'Cancel queued' : status === 'stopping' ? 'Keep playing' : status === 'playing' ? 'Stop' : 'Loop'} ${pad.name}${status ? `, ${status}` : ''}`}
+                style={{ '--live-color': INSTRUMENTS.find(item => item.id === pad.instrument)!.color } as React.CSSProperties}
+                onPointerDown={event => { event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId);
+                  setLiveControlsOpen(false); playLiveAt(event.clientX,event.clientY,event.pointerId); }}
+                onPointerMove={event => { if(event.currentTarget.hasPointerCapture(event.pointerId)) playLiveAt(event.clientX,event.clientY,event.pointerId); }}
+                onPointerUp={event => { stopLive(event.pointerId); if(event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); }}
+                onPointerCancel={event => stopLive(event.pointerId)} onLostPointerCapture={event => stopLive(event.pointerId)}
+                onClick={event => { if(event.detail === 0) {setLiveControlsOpen(false);void triggerPad(index);} }}>
+                <span className="liveRegionCaption"><span>{pad.name}</span>
+                  <small>{status === 'queued' ? 'Queued' : status === 'stopping' ? 'Leaving…' : status === 'playing' ? 'Playing' : sampleTrigger === 'loop' ? 'Tap to layer' : 'One-shot'}</small></span>
+              </button>;
+            })}
+          </div>
+          <div className="liveImageControls">
+            <button className="liveControlsToggle" aria-expanded={liveControlsOpen} aria-controls="liveImageControlPanel"
+              onClick={() => setLiveControlsOpen(current => !current)}>
+              {sampleTrigger === 'loop' ? `Loop · next ${launchBeats === 4 ? 'bar' : 'beat'}` : 'One-shot'} <span aria-hidden="true">⌄</span>
+            </button>
+            {liveControlsOpen && <div id="liveImageControlPanel" className="liveImageControlPanel" style={{ width: Math.min(218, Math.max(120, photoRegion.width - 16)), maxHeight: Math.max(80, photoRegion.height - 65) }}>
+              <div className="liveTriggerChoice" role="group" aria-label="Live playback">
+                <button aria-pressed={sampleTrigger === 'once'} onClick={() => setSampleTrigger('once')}>One-shot</button>
+                <button aria-pressed={sampleTrigger === 'loop'} onClick={() => setSampleTrigger('loop')}>Loop</button>
+              </div>
+              <label>Changes<select aria-label="Live loop launch timing" disabled={sampleTrigger === 'once'} value={launchBeats} onChange={event => setLaunchBeats(Number(event.target.value))}>
+                <option value={4}>Next bar</option><option value={1}>Next beat</option></select></label>
+              <label>Melody repeats<select disabled={sampleTrigger === 'once'} value={repeatBeats} onChange={event => setRepeatBeats(Number(event.target.value))}>
+                <option value={4}>Every bar</option><option value={1}>Every beat</option></select></label>
+              <button className="liveGuideToggle" aria-pressed={showLiveSounds} onClick={() => setShowLiveSounds(current => !current)}>{showLiveSounds ? 'Hide sound map' : 'Show sounds'}</button>
+              <button disabled={!loopPads.length} onClick={stopPadLoops}>Stop live layers</button>
+            </div>}
+          </div>
+        </div>}
+        {hasImage && mode === 'live' && !loopPads.length && kitStatus === 'ready' && <div className="hint">{sampleTrigger === 'loop' ? 'Tap the photo to layer sounds · tap again to remove' : 'Tap or swipe the photo · use multiple fingers to play together'}</div>}
         {hasImage && mode === 'place' && !placements.length && <div className="hint">Choose an instrument, set its size, then tap the photo</div>}
       </section>
     </div>
     <section className="performanceBar" aria-label="Common controls">
       <div className="modePicker">
-        <button aria-pressed={mode === 'place'} className={mode === 'place' ? 'selected' : ''} onClick={() => { stopLive(); setSheet(null); setMode('place'); modeRef.current = 'place'; void resumePlayback(); }}>Place loops</button>
-        <button aria-pressed={mode === 'live'} className={mode === 'live' ? 'selected' : ''} onClick={() => { stopLive(); setSheet(null); setMode('live'); modeRef.current = 'live'; void loadLiveKit(); void resumePlayback(); }}>Sample pads</button>
+        <button aria-pressed={mode === 'place'} className={mode === 'place' ? 'selected' : ''} onClick={() => { stopLive(); setSheet(null); setLiveControlsOpen(false); setMode('place'); modeRef.current = 'place'; void resumePlayback(); }}>Place loops</button>
+        <button aria-pressed={mode === 'live'} className={mode === 'live' ? 'selected' : ''} onClick={() => { stopLive(); setSheet(null); setLiveControlsOpen(false); setMode('live'); modeRef.current = 'live'; void loadLiveKit(); void resumePlayback(); }}>Live image</button>
       </div>
       {mode === 'place' && <div className="placementActions">
         <button aria-label="Undo last edit" disabled={!historyState.canUndo} onClick={undoEdit}>↶ <span>Undo</span></button>
@@ -833,26 +902,6 @@ export default function App() {
         <button disabled={!placements.length} onClick={() => { stopLive(); updatePlacements([], 0.9); }}>Clear placed</button>
       </div>}
     </section>
-    {mode === 'live' && <section className="livePadBank" aria-label="Live sample layers">
-      <div className="liveLayerHeading"><strong>Live layers</strong><span>{loopStates.filter(state => state.status === 'playing').length} playing · {loopStates.filter(state => state.status !== 'playing').length} queued</span></div>
-      <div className="sampleTriggerControls" role="group" aria-label="Sample playback">
-        <button className={sampleTrigger === 'once' ? 'active' : ''} aria-pressed={sampleTrigger === 'once'} onClick={() => setSampleTrigger('once')}>One-shot</button>
-        <button className={sampleTrigger === 'loop' ? 'active' : ''} aria-pressed={sampleTrigger === 'loop'} onClick={() => setSampleTrigger('loop')}>Loop</button>
-        <button disabled={!loopPads.length} onClick={stopPadLoops}>Stop sample loops</button>
-        <label>Changes<select aria-label="Sample loop launch timing" value={launchBeats} onChange={event => setLaunchBeats(Number(event.target.value))}><option value={4}>Next bar</option><option value={1}>Next beat</option></select></label>
-      </div>
-      <div className="livePadGrid">{PHOTO_PADS.map((pad, index) => {
-        const status = loopStates.find(state => state.index === index)?.status;
-        return <button key={pad.file}
-        disabled={kitStatus !== 'ready' || !hasImage} aria-label={`${sampleTrigger === 'once' ? 'Play' : status === 'queued' ? 'Cancel queued' : status === 'stopping' ? 'Keep playing' : status === 'playing' ? 'Stop' : 'Loop'} ${pad.name}${status ? `, ${status}` : ''}`}
-        className={`${loopPads.includes(index) ? 'active' : ''} ${status ?? ''}`} aria-pressed={loopPads.includes(index)}
-        style={{ '--instrument-color': INSTRUMENTS.find(item => item.id === pad.instrument)!.color } as React.CSSProperties}
-        onPointerDown={event => { event.preventDefault(); void triggerPad(index); }}
-        onClick={event => { if (event.detail === 0) void triggerPad(index); }}>
-        <span className="instrumentGlyph" aria-hidden="true">{PAD_KEYS[index].toUpperCase()}</span><span>{pad.name}</span><small>{status === 'queued' ? 'Queued · tap to cancel' : status === 'stopping' ? 'Stopping · tap to keep' : status === 'playing' ? 'Playing' : sampleTrigger === 'loop' ? 'Tap to layer' : 'One-shot'}</small>
-      </button>; })}</div>
-      <p>Your placed loops keep playing. Tap pads or the matching photo regions to add/remove layers. Multiple fingers work on both.</p>
-    </section>}
     <div className={`dockRegion ${sheet ? 'sheetExpanded' : ''}`}>
     <nav className="instrumentDock" aria-label={mode === 'live' ? 'Sample pads and mix' : 'Instruments, visuals, motion and mix'}>
       {mode === 'place' && INSTRUMENTS.map((instrument, index) => <button key={instrument.id}
