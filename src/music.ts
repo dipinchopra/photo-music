@@ -2,6 +2,8 @@ import { composeImage, composeCircleLoop, developLoopTone, loopMelodyDegree, app
 import { SampleBank, PHOTO_PADS } from './pads';
 import { sampleHarmony, sampleDrumStep } from './harmony';
 
+export type SampleLoopState = { index: number; status: 'queued' | 'playing' | 'stopping' };
+
 export type Instrument = 'keys' | 'guitar' | 'bass' | 'drums';
 
 export type ImageTone = {
@@ -115,7 +117,29 @@ export class ChordEngine {
   private transportFrames: { step: number; time: number }[] = [];
   private samples = new SampleBank();
   private sampleVoices: { source: AudioBufferSourceNode; gain: GainNode; index: number; repeating: boolean; timer?: number }[] = [];
-  private sampleLoops = new Map<number, { placement: Placement; everySteps: number; startStep: number }>();
+  private sampleLoops = new Map<number, { placement: Placement; everySteps: number; startStep: number; stopStep?: number }>();
+  onSampleLoopChange: (() => void) | null = null;
+  get sampleLoopStates(): SampleLoopState[] {
+    const audibleStep = this.context ? this.transportFrameAt(this.context.currentTime)?.step ?? -1 : -1;
+    return [...this.sampleLoops].map(([index, loop]) => ({ index,
+      status: loop.stopStep !== undefined ? 'stopping' : loop.startStep > audibleStep ? 'queued' : 'playing' }));
+  }
+
+  private notifySampleLoops(at = this.context?.currentTime ?? 0) {
+    if (!this.onSampleLoopChange) return;
+    const wait = (at - (this.context?.currentTime ?? 0)) * 1000;
+    if (wait <= 1) { this.onSampleLoopChange(); return; }
+    const timer = window.setTimeout(() => { this.hitTimers.delete(timer); this.onSampleLoopChange?.(); }, wait);
+    this.hitTimers.add(timer);
+  }
+
+  private sampleLoopBoundary(beats: number) {
+    const now = this.context!.currentTime;
+    const steps = Math.max(1, beats * 2);
+    // Multiple fingers can join the same boundary even if it is already in lookahead.
+    const frame = this.transportFrames.find(frame => frame.time > now + .003 && frame.step % steps === 0);
+    return frame ?? { step: Math.ceil(this.step / steps) * steps, time: undefined };
+  }
   get sampleLoopIndices() { return [...this.sampleLoops.keys()]; }
   get hasSampleLoops() { return this.sampleLoops.size > 0; }
   onSampleHit: ((index: number, placement: Placement) => void) | null = null;
@@ -217,8 +241,8 @@ export class ChordEngine {
     rate: number, level: number, notify: boolean) {
     const buffer = this.samples.get(index)!;
     if (!this.context || !this.output) return;
-    // Bound rapid multi-finger playing without clipping existing loop voices.
-    if (this.sampleVoices.length >= 20) {
+    // Leave room for the full layered kit and overlapping tails, while bounding rapid retriggers.
+    if (this.sampleVoices.length >= 64) {
       const oldest = this.sampleVoices.shift()!;
       oldest.gain.gain.setTargetAtTime(0.0001, now, 0.005);
       oldest.source.stop(now + 0.025);
@@ -231,7 +255,9 @@ export class ChordEngine {
     source.playbackRate.value = rate;
     filter.type = 'lowpass';
     filter.frequency.value = 1800 + placement.tone.brightness * 11000;
-    gain.gain.value = (0.58 + placement.tone.saturation * 0.18) * level;
+    const peak = (0.58 + placement.tone.saturation * 0.18) * level;
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(peak, now + .006);
     source.connect(filter); filter.connect(gain); gain.connect(this.sampleMix.get(instrument)!);
     const voice: (typeof this.sampleVoices)[number] = { source, gain, index, repeating };
     this.sampleVoices.push(voice);
@@ -254,25 +280,57 @@ export class ChordEngine {
     return true;
   }
 
-  async toggleSampleLoop(index: number, placement: Placement, beats = 4, valid: () => boolean = () => true) {
-    if (this.sampleLoops.has(index)) { this.removeSampleLoop(index); return false; }
+  async toggleSampleLoop(index: number, placement: Placement, beats = 4, valid: () => boolean = () => true, quantizeBeats = 0) {
+    const toggleExisting = () => {
+      const loop = this.sampleLoops.get(index);
+      if (!loop) return undefined;
+      const now = this.context?.currentTime ?? 0;
+      const audibleStep = this.transportFrameAt(now)?.step ?? -1;
+      if (loop.stopStep !== undefined) {
+        delete loop.stopStep; this.notifySampleLoops(); return true;
+      }
+      // A queued launch can always be cancelled immediately.
+      if (!quantizeBeats || loop.startStep > audibleStep) {
+        this.removeSampleLoop(index); return false;
+      }
+      const boundary = this.sampleLoopBoundary(quantizeBeats);
+      if (boundary.step < this.step && boundary.time !== undefined) this.removeSampleLoop(index, boundary.time);
+      else { loop.stopStep = boundary.step; this.notifySampleLoops(); }
+      return false;
+    };
+    const toggled = toggleExisting();
+    if (toggled !== undefined) return toggled;
     await this.unlock();
-    if (!valid() || !this.running || !this.samples.get(index)) return false;
-    // A second toggle may have arrived while Safari was resuming.
-    if (this.sampleLoops.has(index)) { this.removeSampleLoop(index); return false; }
-    this.sampleLoops.set(index, { placement, everySteps: Math.max(1, beats) * 2, startStep: Math.ceil(this.step / 2) * 2 });
+    if (!valid() || !this.running || !this.samples.get(index) || !PHOTO_PADS[index]) return false;
+    const resumedToggle = toggleExisting();
+    if (resumedToggle !== undefined) return resumedToggle;
+    if (!this.placements.length && !this.hasSampleLoops && this.nextStepTime === null) {
+      this.step = 0; this.transportFrames = [];
+    }
+    const boundary = quantizeBeats ? this.sampleLoopBoundary(quantizeBeats)
+      : { step: Math.ceil(this.step / 2) * 2, time: undefined };
+    this.sampleLoops.set(index, { placement, everySteps: Math.max(1, beats) * 2, startStep: boundary.step });
+    if (boundary.step < this.step && boundary.time !== undefined) {
+      if (PHOTO_PADS[index].instrument !== 'drums' || sampleDrumStep(index, boundary.step, this.controls.fourOnFloor, this.controls.drumDensity))
+        this.startSample(index, placement, boundary.time, true);
+      this.notifySampleLoops(boundary.time);
+    }
+    this.notifySampleLoops();
     this.schedule();
     return true;
   }
 
-  private removeSampleLoop(index: number) {
+  private removeSampleLoop(index: number, at = this.context?.currentTime ?? 0) {
     this.sampleLoops.delete(index);
-    const now = this.context?.currentTime ?? 0;
     this.sampleVoices.filter(voice => voice.index === index && voice.repeating).forEach(voice => {
-      if (voice.timer !== undefined) { window.clearTimeout(voice.timer); this.hitTimers.delete(voice.timer); }
-      voice.gain.gain.setTargetAtTime(0.0001, now, 0.015);
-      try { voice.source.stop((this.sourceStarts.get(voice.source) ?? 0) >= now ? now : now + 0.08); } catch {}
+      const future = (this.sourceStarts.get(voice.source) ?? 0) >= at;
+      if (voice.timer !== undefined && future) { window.clearTimeout(voice.timer); this.hitTimers.delete(voice.timer); }
+      if (typeof voice.gain.gain.cancelAndHoldAtTime === 'function') voice.gain.gain.cancelAndHoldAtTime(at);
+      else { voice.gain.gain.cancelScheduledValues(at); voice.gain.gain.setValueAtTime(Math.max(.0001, voice.gain.gain.value), at); }
+      voice.gain.gain.linearRampToValueAtTime(.0001, future ? at : at + .18);
+      try { voice.source.stop(future ? at : at + .2); } catch {}
     });
+    this.notifySampleLoops(at);
   }
 
   clearSampleLoops() {
@@ -446,6 +504,21 @@ export class ChordEngine {
     this.updatePlacements(placements);
     await this.unlock();
     if (wasEmpty && (this.placements.length || this.hasSampleLoops)) this.schedule();
+  }
+
+  releasePlacements(release = .18) {
+    this.cancelShuffle();
+    this.updatePlacements([]);
+    if (!this.context) return;
+    const now = this.context.currentTime;
+    this.activeSources.forEach((source, index) => {
+      if (!this.placedVoices.has(source)) return;
+      const gain = this.activeGains[index];
+      if (typeof gain.gain.cancelAndHoldAtTime === 'function') gain.gain.cancelAndHoldAtTime(now);
+      else gain.gain.cancelScheduledValues(now);
+      gain.gain.setTargetAtTime(.0001, now, Math.max(.01, release / 4));
+      try { source.stop((this.sourceStarts.get(source) ?? 0) >= now ? now : now + release); } catch {}
+    });
   }
 
   updatePlacements(placements: Placement[]) {
@@ -629,6 +702,10 @@ export class ChordEngine {
     const noteAt = (degree: number, register: number) =>
       hz(scaleNote(composition, degree) + this.controls.transpose + this.theory.octave * 12 + register);
     this.sampleLoops.forEach((loop, index) => {
+      if (loop.stopStep !== undefined && this.step >= loop.stopStep) {
+        this.removeSampleLoop(index, this.scheduledTime!); return;
+      }
+      if (this.step === loop.startStep) this.notifySampleLoops(this.scheduledTime!);
       const active = PHOTO_PADS[index].instrument === 'drums'
         ? sampleDrumStep(index, this.step, this.controls.fourOnFloor, this.controls.drumDensity)
         : (this.step - loop.startStep) % loop.everySteps === 0;
@@ -785,7 +862,10 @@ export class ChordEngine {
     this.cancelShuffle(); this.placedVoices.clear();
     this.loopPhrases.clear();
     this.transportFrames = [];
-    if (preserveSampleLoops) this.sampleLoops.forEach(loop => { loop.startStep = this.step; });
+    if (preserveSampleLoops) this.sampleLoops.forEach((loop, index) => {
+      if (loop.stopStep !== undefined) this.sampleLoops.delete(index);
+      else loop.startStep = this.step;
+    });
     else this.sampleLoops.clear();
     this.sampleVoices = [];
     this.placements = [];
@@ -795,6 +875,7 @@ export class ChordEngine {
     this.scheduledTime = null;
     this.hitTimers.forEach(timer => window.clearTimeout(timer));
     this.hitTimers.clear();
+    this.notifySampleLoops();
     this.keyHistory.clear();
     if (!this.context) return;
     const now = this.noteTime;

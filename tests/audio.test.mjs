@@ -339,9 +339,9 @@ test('rapid pad playing is bounded and decoded samples survive audio context rep
   try {
     const engine = new ChordEngine();
     await engine.prepareSamples('https://example.com/samples/');
-    for (let i = 0; i < 25; i++) await engine.playSample(i % 16, placement);
+    for (let i = 0; i < 80; i++) await engine.playSample(i % 16, placement);
     const old = Context.instances.at(-1);
-    assert.equal(engine.sampleVoices.length, 20);
+    assert.equal(engine.sampleVoices.length, 64);
     const first = old.bufferSources.find(source => source.buffer?.original);
     assert.ok(first.stopTime <= old.currentTime + .025);
     old.close = async () => { old.state = 'closed'; };
@@ -679,4 +679,135 @@ test('motion changes arp timbre without changing its phase, and switching off re
     return frequencies;
   };
   assert.deepEqual(await render(true),await render(false));
+});
+
+async function withSampleKit(run) {
+  const original=globalThis.fetch;
+  globalThis.fetch=async()=>({ok:true,arrayBuffer:async()=>new ArrayBuffer(48)});
+  try {
+    const engine=new ChordEngine();
+    engine.setComposition({...composeImage([cell]),style:'plucked',swing:0});
+    engine.configure({tempo:120});
+    await engine.prepareSamples('https://example.com/samples/');
+    await run(engine,Context.instances.at(-1));
+  } finally {globalThis.fetch=original;}
+}
+function advanceAudio(engine,context,until) {
+  while(context.currentTime+.025<until) {context.currentTime+=.025;engine.schedule();}
+  context.currentTime=until;engine.schedule();
+}
+const sampleStarts=(engine,context,index)=>context.bufferSources.filter(source=>source.buffer===engine.samples.get(index)).map(source=>source.startTime);
+
+test('multiple layers queue onto the placed ensemble bar, then stop with a fade on a later bar', async()=>{
+  await withSampleKit(async(engine,context)=>{
+    await engine.playPlacements([placement]);
+    advanceAudio(engine,context,.3);
+    await Promise.all([engine.toggleSampleLoop(0,placement,4,()=>true,4),engine.toggleSampleLoop(1,placement,4,()=>true,4)]);
+    assert.equal(engine.sampleLoops.get(0).startStep,8);
+    assert.equal(engine.sampleLoops.get(1).startStep,8);
+    assert.ok(engine.sampleLoopStates.every(state=>state.status==='queued'));
+    for(let step=2;step<=8;step++){advanceAudio(engine,context,step*.25);}
+    assert.ok(sampleStarts(engine,context,0).every(time=>Math.abs(time-2.02)<1e-9));
+    assert.deepEqual(sampleStarts(engine,context,1).slice(0,1),sampleStarts(engine,context,0).slice(0,1));
+    context.currentTime=2.03;
+    assert.ok(engine.sampleLoopStates.every(state=>state.status==='playing'));
+    const sounding=engine.sampleVoices.find(voice=>voice.index===0);
+    advanceAudio(engine,context,2.3);
+    await engine.toggleSampleLoop(0,placement,4,()=>true,4);
+    assert.equal(engine.sampleLoopStates.find(state=>state.index===0).status,'stopping');
+    assert.equal(sounding.source.stopTime,undefined);
+    for(let step=10;step<=16;step++){advanceAudio(engine,context,step*.25);}
+    assert.deepEqual(engine.sampleLoopIndices,[1]);
+    assert.ok(Math.abs(sounding.source.stopTime-4.22)<1e-9);
+    assert.ok(sounding.gain.gain.events.some(event=>event.kind==='linear'&&Math.abs(event.time-4.2)<1e-9&&event.value===.0001));
+    assert.equal(engine.placements.length,1,'the placed ensemble survives removing a layer');
+    assert.ok(engine.sampleVoices.some(voice=>voice.index===1&&voice.source.stopTime===undefined));
+  });
+});
+
+test('simultaneous idle launches join the same already-scheduled boundary without duplicate attacks', async()=>{
+  await withSampleKit(async(engine,context)=>{
+    await Promise.all([engine.toggleSampleLoop(0,placement,4,()=>true,4),engine.toggleSampleLoop(1,placement,4,()=>true,4)]);
+    assert.deepEqual(engine.sampleLoopIndices,[0,1]);
+    assert.deepEqual([...new Set(sampleStarts(engine,context,0))],[.02]);
+    assert.deepEqual([...new Set(sampleStarts(engine,context,1))],[.02]);
+    assert.equal(sampleStarts(engine,context,1).length,4,'one chord attack, not duplicate scheduled entries');
+    advanceAudio(engine,context,.3);
+    assert.equal(sampleStarts(engine,context,1).length,4);
+  });
+});
+
+test('queued starts and stops can be cancelled independently, including a pending lookahead hit', async()=>{
+  await withSampleKit(async(engine,context)=>{
+    await engine.playPlacements([placement]);
+    advanceAudio(engine,context,.3);
+    await engine.toggleSampleLoop(3,placement,4,()=>true,4);
+    await engine.toggleSampleLoop(3,placement,4,()=>true,4);
+    assert.equal(engine.hasSampleLoops,false);
+    for(let step=2;step<=8;step++){advanceAudio(engine,context,step*.25);}
+    assert.equal(sampleStarts(engine,context,3).length,0);
+    // This joins the bar already in lookahead, then cancels before it sounds.
+    await engine.toggleSampleLoop(0,placement,4,()=>true,4);
+    const future=engine.sampleVoices.find(voice=>voice.index===0);
+    assert.ok(future.source.startTime>context.currentTime);
+    await engine.toggleSampleLoop(0,placement,4,()=>true,4);
+    assert.equal(future.source.stopTime,context.currentTime);
+    assert.equal(engine.hasSampleLoops,false);
+    await engine.toggleSampleLoop(1,placement,4,()=>true,4);
+    context.currentTime=2.03;
+    await engine.toggleSampleLoop(1,placement,4,()=>true,4);
+    assert.equal(engine.sampleLoops.get(1).stopStep,16);
+    await engine.toggleSampleLoop(1,placement,4,()=>true,4);
+    assert.equal(engine.sampleLoops.get(1).stopStep,undefined);
+    assert.equal(engine.sampleLoopStates[0].status,'playing');
+  });
+});
+
+test('clearing placed loops fades only synth voices and leaves sample layers and one-shots intact', async()=>{
+  await withSampleKit(async(engine,context)=>{
+    await engine.playPlacements([placement]);
+    await engine.toggleSampleLoop(1,placement,4);
+    await engine.playSample(12,placement);
+    advanceAudio(engine,context,.6);
+    const voices=[...engine.sampleVoices];
+    assert.ok(voices.some(voice=>voice.repeating));
+    assert.ok(voices.some(voice=>!voice.repeating));
+    engine.releasePlacements(.9);
+    assert.equal(engine.placements.length,0);
+    assert.deepEqual(engine.sampleLoopIndices,[1]);
+    assert.ok(context.oscillators.every(osc=>osc.stopTime!==undefined));
+    assert.ok(voices.every(voice=>voice.source.stopTime===undefined),'no stop was sent to any sample voice');
+    assert.ok(voices.every(voice=>voice.gain.gain.heldAt===undefined),'sample envelopes remain untouched');
+    const before=sampleStarts(engine,context,1).length;
+    advanceAudio(engine,context,3);
+    assert.ok(sampleStarts(engine,context,1).length>before,'the remaining sample transport keeps running');
+  });
+});
+
+test('next-beat launch uses the shared swung grid, and pause honors queued stop intentions', async()=>{
+  await withSampleKit(async(engine,context)=>{
+    engine.setComposition({...composeImage([cell]),style:'plucked',swing:.2});
+    await engine.playPlacements([placement]);
+    context.currentTime=.1;
+    await engine.toggleSampleLoop(0,placement,4,()=>true,1);
+    assert.equal(engine.sampleLoops.get(0).startStep,2);
+    advanceAudio(engine,context,.5);
+    assert.ok(Math.abs(sampleStarts(engine,context,0)[0]-.52)<1e-9);
+    context.currentTime=.6;
+    await engine.toggleSampleLoop(0,placement,4,()=>true,4);
+    assert.equal(engine.sampleLoopStates[0].status,'stopping');
+    engine.stop(.12,true);
+    assert.equal(engine.hasSampleLoops,false,'a layer asked to stop must not revive after screen lock');
+  });
+});
+
+test('the full live bank can launch together without stealing the first layers', async()=>{
+  await withSampleKit(async(engine,context)=>{
+    await Promise.all(Array.from({length:16},(_,index)=>engine.toggleSampleLoop(index,
+      {...placement,instrument:index<4?'keys':index<8?'guitar':index<12?'bass':'drums'},4,()=>true,4)));
+    assert.equal(engine.sampleLoopIndices.length,16);
+    assert.ok(engine.sampleVoices.length>20,'a complete layered kit needs more than the previous voice budget');
+    assert.ok(engine.sampleVoices.every(voice=>voice.source.stopTime===undefined),'initial layers must not be stolen');
+    assert.ok(context.bufferSources.filter(source=>source.buffer?.original).every(source=>source.startTime>=.02));
+  });
 });

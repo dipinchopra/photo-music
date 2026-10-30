@@ -13,6 +13,25 @@ Built with React, TypeScript, Canvas, Pointer Events and Web Audio; no backend r
 There is no finger-controlled Play image mode. Placing a circle adds an autonomous part.
 The existing sample-pad instrument remains available under Sample pads.
 
+## Live sample layers
+
+Keep a placed ensemble running and switch to Sample pads to add independent layers.
+Loop is the default: tap once to add a layer, again to remove it. Choose next-bar
+(default) or next-beat changes. A stopped layer fades out over approximately 180 ms;
+one-shots play their recorded tails and have a short attack ramp to avoid clicks.
+
+The visible 4×4 pad bank mirrors the photo's 4×4 touch regions. Both support multiple
+fingers, and keyboard shortcuts still work. Queued/Playing/Stopping labels show layer
+state. Tap a queued start to cancel it; tap a queued stop to keep the layer playing.
+Launches share the placed ensemble clock, including when multiple fingers join a boundary
+already in the audio scheduler's lookahead.
+
+A bar is four beats here. Melodic layers retrigger every bar by default (or every beat
+via Mix); their sample tails are not forcibly cut at the bar line. Drums follow the groove.
+Stop sample loops fades those layers without stopping the placed ensemble; Clear placed
+releases the placed voices while leaving samples playing. Switching between Place loops
+and Sample pads keeps both kinds of loop running. A new photo starts a fresh session.
+
 ## Composition
 
 - The whole photo establishes style, tempo, swing, scale and a spatially derived chord progression.
