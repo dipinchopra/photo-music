@@ -41,9 +41,9 @@ one-shots play their recorded tails and have a short attack ramp to avoid clicks
 
 The photo itself is the live player: its 4×4 regions support multiple fingers,
 swipes, keyboard shortcuts and accessible button labels. There is no separate pad bank.
-A compact on-image control popover contains One-shot/Loop, next-bar/next-beat changes,
-melody repeat timing and Stop live layers. Show sounds temporarily reveals the region map.
-Active region names stay visible on the image.
+One-shot/Loop, next-bar/next-beat changes, melody repeats and Stop live layers sit below
+the photo. The image has no visible sound names, playback-state labels, hints or dropdowns.
+Transparent touch regions retain accessible names for keyboard and screen-reader use.
 
 Queued layers have dashed cues; playing layers show a small audio-clock progress ring;
 stopping layers become quieter, then leave a fading trace. One-shots have a brief visual
@@ -53,7 +53,7 @@ Tap a queued start to cancel it; tap a queued stop to keep the layer playing.
 Launches continue to share the placed ensemble clock.
 
 A bar is four beats here. Melodic layers retrigger every bar by default (or every beat
-via the on-image controls or Mix); their sample tails are not forcibly cut at the bar line. Drums follow the groove.
+via the controls below the photo or Mix); their sample tails are not forcibly cut at the bar line. Drums follow the groove.
 Stop live layers fades those layers without stopping the placed ensemble; Clear placed
 releases the placed voices while leaving samples playing. Switching between Place loops
 and Live image keeps both kinds of loop running. A new photo starts a fresh session.

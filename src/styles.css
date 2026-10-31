@@ -529,23 +529,17 @@ html, body, #root, .app, .app * {
 
 .theoryButton.active { --instrument-color: #f5f5f5; }
 
-/* The photo is the live instrument. Controls occupy only a small corner. */
+/* The photo is the live instrument; its controls stay below the image. */
 .livePhotoInterface { position: absolute; z-index: 3; pointer-events: none; }
 .livePhotoRegions { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); grid-template-rows: repeat(4,minmax(0,1fr)); width: 100%; height: 100%; pointer-events: auto; }
 .livePhotoRegion { position: relative; min-width: 0; min-height: 0; border: 0; border-radius: 0; padding: 0; background: transparent; touch-action: none; cursor: crosshair; color: #fff; }
 .livePhotoRegion:disabled { opacity: 1; cursor: wait; }
 .livePhotoRegion:focus-visible { outline: 1px solid var(--live-color); outline-offset: -4px; }
-.liveRegionCaption { position: absolute; left: 7px; right: 5px; bottom: 7px; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; opacity: 0; transition: opacity .18s; pointer-events: none; text-align: left; font-size: 10px; line-height: 1.2; text-shadow: 0 1px 5px #000,0 0 2px #000; }
-.liveRegionCaption small { font-size: 8px; color: var(--live-color); }
-.livePhotoRegion.playing .liveRegionCaption, .livePhotoRegion.queued .liveRegionCaption, .livePhotoRegion.stopping .liveRegionCaption, .livePhotoRegion:focus-visible .liveRegionCaption, .showSounds .liveRegionCaption { opacity: .9; }
-.showSounds .livePhotoRegion { box-shadow: inset 0 0 0 .5px #ffffff22; }
-@media (hover:hover) { .livePhotoRegion:hover .liveRegionCaption { opacity: .9; } }
-.liveImageControls { position: absolute; top: 8px; right: 8px; max-width: calc(100% - 16px); pointer-events: auto; }
-.liveControlsToggle { display: flex; gap: 12px; align-items: center; justify-content: space-between; border: 1px solid #ffffff30; border-radius: 22px; padding: 9px 12px; min-height: 36px; background: #111a; backdrop-filter: blur(14px); color: #eee; font-size: 11px; }
-.liveImageControlPanel { position: absolute; top: calc(100% + 7px); right: 0; width: 218px; max-width: calc(100vw - 50px); display: flex; flex-direction: column; gap: 10px; padding: 12px; overflow-y: auto; border: 1px solid #ffffff25; border-radius: 15px; background: #111e; backdrop-filter: blur(18px); color: #eee; box-shadow: 0 8px 25px #0005; }
-.liveImageControlPanel button, .liveImageControlPanel select { border: 1px solid #ffffff25; border-radius: 8px; padding: 8px; min-height: 36px; background: #ffffff08; color: #eee; font-size: 11px; }
-.liveImageControlPanel select:disabled { opacity: .4; }
-.liveImageControlPanel label { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11px; }
-.liveTriggerChoice { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
-.liveImageControlPanel button[aria-pressed=true] { background: #eee; color: #111; }
-@media(max-width:450px) { .liveRegionCaption { left: 5px; bottom: 5px; font-size: 9px; } .liveRegionCaption small { font-size: 8px; } }
+
+.livePlaybackControls { flex-shrink: 0; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 4px 0; }
+.livePlaybackControls button, .livePlaybackControls select { border: 1px solid #ffffff25; border-radius: 8px; padding: 8px; min-height: 36px; background: #171717; color: #eee; font: inherit; font-size: 11px; }
+.livePlaybackControls select:disabled { opacity: .4; }
+.livePlaybackControls label { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #aaa; }
+.liveTriggerChoice { display: flex; gap: 4px; }
+.livePlaybackControls button[aria-pressed=true] { background: #eee; color: #111; }
+@media(max-width:450px) { .livePlaybackControls { gap: 6px; } .livePlaybackControls label { font-size: 10px; } .livePlaybackControls button, .livePlaybackControls select { font-size: 10px; padding: 7px; } }

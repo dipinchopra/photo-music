@@ -252,7 +252,7 @@ test('Clear releases sounding voices over 0.9 seconds instead of cutting them of
   assert.ok(context.oscillators.every(node => node.stopTime === 1));
   const envelopes = context.gains.filter(node => node.gain.heldAt === 0.1);
   assert.ok(envelopes.length > 0);
-  assert.ok(envelopes.every(node => node.gain.target.constant === 0.225));
+  assert.ok(envelopes.every(node => node.gain.events.at(-1).kind === 'linear' && node.gain.events.at(-1).value === 0 && node.gain.events.at(-1).time === 1));
 });
 
 test('a frozen running Safari context is replaced without waiting for close or resume', async () => {
@@ -721,7 +721,7 @@ test('multiple layers queue onto the placed ensemble bar, then stop with a fade 
     for(let step=10;step<=16;step++){advanceAudio(engine,context,step*.25);}
     assert.deepEqual(engine.sampleLoopIndices,[1]);
     assert.ok(Math.abs(sounding.source.stopTime-4.22)<1e-9);
-    assert.ok(sounding.gain.gain.events.some(event=>event.kind==='linear'&&Math.abs(event.time-4.2)<1e-9&&event.value===.0001));
+    assert.ok(sounding.gain.gain.events.some(event=>event.kind==='linear'&&Math.abs(event.time-4.2)<1e-9&&event.value===0));
     assert.equal(engine.placements.length,1,'the placed ensemble survives removing a layer');
     assert.ok(engine.sampleVoices.some(voice=>voice.index===1&&voice.source.stopTime===undefined));
   });
@@ -960,4 +960,51 @@ test('live image progress follows the audio clock and is read-only across swung 
     engine.clearSampleLoops();
     assert.equal(engine.sampleLoopProgress.size,0);
   });
+});
+
+test('kick, snare noise and both hats have zero-ended envelopes with softened attacks',async()=>{
+  const engine=new ChordEngine();await engine.unlock();
+  const context=Context.instances.at(-1);
+  engine.kick(.2);
+  const kick=context.oscillators.at(-1),kickEnvelope=kick.connections[0].gain.events;
+  assert.equal(kickEnvelope[0].value,0);
+  assert.equal(kickEnvelope[1].kind,'linear');
+  assert.ok(kickEnvelope[1].time-kick.startTime>=.005);
+  assert.equal(kickEnvelope.at(-1).value,0);
+  assert.ok(kickEnvelope.at(-1).time<kick.stopTime);
+  for(const [bright,open,duration] of [[false,false,.16],[true,false,.055],[true,true,.24]]) {
+    engine.noise(.1,bright,open);
+    const source=context.bufferSources.at(-1),filter=source.connections[0];
+    const envelope=filter.connections[0].gain.events;
+    assert.equal(envelope[0].value,0);
+    assert.equal(envelope[1].kind,'linear');
+    assert.ok(envelope[1].time-source.startTime>=.004);
+    assert.equal(envelope.at(-1).value,0);
+    assert.ok(Math.abs(envelope.at(-1).time-source.startTime-duration)<1e-9);
+    assert.ok(filter.frequency.value<context.sampleRate/2);
+  }
+});
+
+test('sample starts and voice-limit releases reach zero rather than cutting a nonzero tail',async()=>{
+  await withSampleKit(async(engine,context)=>{
+    await engine.playSample(12,{...placement,instrument:'drums'});
+    const first=engine.sampleVoices[0];
+    assert.equal(first.gain.gain.events[0].value,0);
+    for(let i=0;i<64;i++) await engine.playSample(12,{...placement,instrument:'drums'});
+    assert.equal(first.gain.gain.events.at(-1).kind,'linear');
+    assert.equal(first.gain.gain.events.at(-1).value,0);
+    assert.ok(first.gain.gain.events.at(-1).time<first.source.stopTime);
+  });
+});
+
+test('release fallback holds the current level before fading to silence',async()=>{
+  for(const stop of ['releasePlacements','stop']) {
+    const engine=new ChordEngine();await engine.playPlacements([placement]);
+    const context=Context.instances.at(-1);context.currentTime=.1;
+    const gain=engine.activeGains[0];gain.gain.cancelAndHoldAtTime=undefined;gain.gain.value=.08;
+    engine[stop](.2);
+    assert.deepEqual(gain.gain.events.at(-2),{kind:'set',value:.08,time:.1});
+    assert.equal(gain.gain.events.at(-1).value,0);
+    assert.ok(Math.abs(gain.gain.events.at(-1).time-.3)<1e-9);
+  }
 });

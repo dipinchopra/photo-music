@@ -298,8 +298,10 @@ export class ChordEngine {
     // Leave room for the full layered kit and overlapping tails, while bounding rapid retriggers.
     if (this.sampleVoices.length >= 64) {
       const oldest = this.sampleVoices.shift()!;
-      oldest.gain.gain.setTargetAtTime(0.0001, now, 0.005);
-      oldest.source.stop(now + 0.025);
+      if (typeof oldest.gain.gain.cancelAndHoldAtTime === 'function') oldest.gain.gain.cancelAndHoldAtTime(now);
+      else { const level = oldest.gain.gain.value; oldest.gain.gain.cancelScheduledValues(now); oldest.gain.gain.setValueAtTime(level, now); }
+      oldest.gain.gain.linearRampToValueAtTime(0, now + .02);
+      oldest.source.stop(now + .025);
     }
     const source = this.context.createBufferSource();
     const filter = this.context.createBiquadFilter();
@@ -310,7 +312,7 @@ export class ChordEngine {
     filter.type = 'lowpass';
     filter.frequency.value = 1800 + placement.tone.brightness * 11000;
     const peak = (0.58 + placement.tone.saturation * 0.18) * level;
-    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.setValueAtTime(0, now);
     gain.gain.linearRampToValueAtTime(peak, now + (instrument === 'drums' ? .006 : Math.max(.006, this.theoryFadeUntil - now)));
     source.connect(filter); filter.connect(gain); gain.connect(this.sampleMix.get(instrument)!);
     const voice: (typeof this.sampleVoices)[number] = { source, gain, index, repeating };
@@ -381,7 +383,7 @@ export class ChordEngine {
       if (voice.timer !== undefined && future) { window.clearTimeout(voice.timer); this.hitTimers.delete(voice.timer); }
       if (typeof voice.gain.gain.cancelAndHoldAtTime === 'function') voice.gain.gain.cancelAndHoldAtTime(at);
       else { voice.gain.gain.cancelScheduledValues(at); voice.gain.gain.setValueAtTime(Math.max(.0001, voice.gain.gain.value), at); }
-      voice.gain.gain.linearRampToValueAtTime(.0001, future ? at : at + .18);
+      voice.gain.gain.linearRampToValueAtTime(0, future ? at : at + .18);
       try { voice.source.stop(future ? at : at + .2); } catch {}
     });
     this.notifySampleLoops(at);
@@ -570,8 +572,8 @@ export class ChordEngine {
       if (!this.placedVoices.has(source)) return;
       const gain = this.activeGains[index];
       if (typeof gain.gain.cancelAndHoldAtTime === 'function') gain.gain.cancelAndHoldAtTime(now);
-      else gain.gain.cancelScheduledValues(now);
-      gain.gain.setTargetAtTime(.0001, now, Math.max(.01, release / 4));
+      else { const level = gain.gain.value; gain.gain.cancelScheduledValues(now); gain.gain.setValueAtTime(level, now); }
+      gain.gain.linearRampToValueAtTime(0, now + Math.max(.01, release));
       try { source.stop((this.sourceStarts.get(source) ?? 0) >= now ? now : now + release); } catch {}
     });
   }
@@ -698,8 +700,10 @@ export class ChordEngine {
     osc.type = 'sine';
     osc.frequency.setValueAtTime(125, now);
     osc.frequency.exponentialRampToValueAtTime(48, now + 0.15);
-    gain.gain.setValueAtTime(volume, now);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.27);
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(volume, now + .005);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + .25);
+    gain.gain.linearRampToValueAtTime(0, now + .27);
     osc.connect(gain);
     gain.connect(this.placedMix.get('drums')!);
     if (this.delay && send > 0) {
@@ -725,9 +729,11 @@ export class ChordEngine {
     const now = this.noteTime;
     source.buffer = buffer;
     filter.type = bright ? 'highpass' : 'bandpass';
-    filter.frequency.value = bright ? (open ? 5000 : 6800) : 1550;
-    gain.gain.setValueAtTime(volume, now);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+    filter.frequency.value = Math.min(this.context.sampleRate * .45, bright ? (open ? 5000 : 6800) : 1550);
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(volume, now + .004);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration - .006);
+    gain.gain.linearRampToValueAtTime(0, now + duration);
     source.connect(filter);
     filter.connect(gain);
     gain.connect(this.placedMix.get('drums')!);
@@ -944,8 +950,8 @@ export class ChordEngine {
     const now = this.noteTime;
     this.activeGains.forEach((gain) => {
       if (typeof gain.gain.cancelAndHoldAtTime === 'function') gain.gain.cancelAndHoldAtTime(now);
-      else gain.gain.cancelScheduledValues(now);
-      gain.gain.setTargetAtTime(0.0001, now, Math.max(0.01, release / 4));
+      else { const level = gain.gain.value; gain.gain.cancelScheduledValues(now); gain.gain.setValueAtTime(level, now); }
+      gain.gain.linearRampToValueAtTime(0, now + Math.max(.01, release));
     });
     const sources = [...this.activeSources];
     this.activeSources = [];
