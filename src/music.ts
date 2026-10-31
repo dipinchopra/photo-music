@@ -1,10 +1,10 @@
-import { composeImage, composeCircleLoop, developLoopTone, loopMelodyDegree, applyLoopTheory, DEFAULT_LOOP_THEORY, type LoopTheory, type LoopScore, randomAt, scaleNote, arpeggioDegree, type ArpMode, type Composition } from './composition';
+import { composeImage, harmonyPosition, padVoicing, composeCircleLoop, developLoopTone, loopMelodyDegree, applyLoopTheory, DEFAULT_LOOP_THEORY, type LoopTheory, type LoopScore, randomAt, scaleNote, arpeggioDegree, type ArpMode, type Composition } from './composition';
 import { SampleBank, PHOTO_PADS } from './pads';
 import { sampleHarmony, sampleDrumStep } from './harmony';
 
 export type SampleLoopState = { index: number; status: 'queued' | 'playing' | 'stopping' };
 
-export type Instrument = 'keys' | 'guitar' | 'bass' | 'drums';
+export type Instrument = 'keys' | 'guitar' | 'bass' | 'drums' | 'pads';
 
 export type ImageTone = {
   hue: number;
@@ -25,6 +25,7 @@ export type Placement = {
 };
 
 type MusicControls = {
+  pads: number; padsTone: number; padsSustain: number; padsDrift: number;
   placedLevel: number;
   sampleLevel: number;
   sampleKeys: number;
@@ -67,6 +68,8 @@ function hz(semitones: number) {
 type TimbreBinding = { filter: BiquadFilterNode; colourGain: GainNode; cutoff: number; tone: ImageTone };
 
 export class ChordEngine {
+  private padChords = new Map<number, { index: number; revision: number; step: number; notes: number[] }>();
+  private padRevision = 0;
   private theory: LoopTheory = { ...DEFAULT_LOOP_THEORY };
   private pendingTheory: LoopTheory | null = null;
   private theoryFadeUntil = 0;
@@ -104,6 +107,7 @@ export class ChordEngine {
         window.clearTimeout(voice.timer); this.hitTimers.delete(voice.timer); voice.timer = undefined;
       }
     });
+    this.padRevision++;
     this.theory = this.pendingTheory;
     this.pendingTheory = null;
     this.theoryFadeUntil = at + .06;
@@ -451,6 +455,7 @@ export class ChordEngine {
     return (30000 / tempo) * (1 + (this.step % 2 === 1 ? 1 : -1) * this.composition.swing);
   }
   private controls: MusicControls = {
+    pads: .64, padsTone: .38, padsSustain: .78, padsDrift: .45,
     placedLevel: 1, sampleLevel: .55, sampleKeys: .78, sampleGuitar: .7, sampleBass: .68, sampleDrums: .6,
     tempo: 96, transpose: 0, complexity: 0.5, space: 0.55,
     keys: 0.78, keysTone: 0.62, keysSustain: 0.55, keysDelay: 0, keysArp: 'off', keysArpRate: 2,
@@ -461,6 +466,7 @@ export class ChordEngine {
 
   setComposition(composition: Composition, preserveTransport = false) {
     this.composition = composition;
+    this.padChords.clear();
     this.loopPhrases.clear();
     this.variation = randomAt(composition.seed, 3);
     if (!preserveTransport) {
@@ -490,7 +496,7 @@ export class ChordEngine {
     apply(this.placedMaster, this.controls.placedLevel);
     apply(this.sampleMaster, this.controls.sampleLevel);
     const sampleLevels = { keys: this.controls.sampleKeys, guitar: this.controls.sampleGuitar,
-      bass: this.controls.sampleBass, drums: this.controls.sampleDrums };
+      bass: this.controls.sampleBass, drums: this.controls.sampleDrums, pads: this.controls.sampleKeys };
     this.placedMix.forEach((gain, instrument) => apply(gain, this.controls[instrument]));
     this.sampleMix.forEach((gain, instrument) => apply(gain, sampleLevels[instrument]));
   }
@@ -519,7 +525,7 @@ export class ChordEngine {
       this.shuffleGain = this.context.createGain(); this.shuffleGain.gain.value = 1;
       this.placedMaster.connect(this.shuffleGain); this.shuffleGain.connect(this.output); this.sampleMaster.connect(this.output);
       this.placedMix.clear(); this.sampleMix.clear();
-      for (const instrument of ['keys', 'guitar', 'bass', 'drums'] as const) {
+      for (const instrument of ['keys', 'guitar', 'bass', 'drums', 'pads'] as const) {
         const placed = this.context.createGain(), sample = this.context.createGain();
         placed.connect(this.placedMaster); sample.connect(this.sampleMaster);
         this.placedMix.set(instrument, placed); this.sampleMix.set(instrument, sample);
@@ -582,6 +588,7 @@ export class ChordEngine {
     this.placements = placements;
     const ids = new Set(placements.map(placement => placement.id));
     this.loopPhrases.forEach((_, id) => { if (!ids.has(id)) this.loopPhrases.delete(id); });
+    this.padChords.forEach((_, id) => { if (!ids.has(id)) this.padChords.delete(id); });
     this.keyHistory.forEach((_, id) => { if (!ids.has(id)) this.keyHistory.delete(id); });
     if (this.context) placements.forEach(placement => {
       this.timbreBindings.get(placement.id)?.forEach(binding => {
@@ -595,7 +602,7 @@ export class ChordEngine {
   }
 
   private tone(frequency: number, volume: number, duration: number, type: OscillatorType,
-    cutoff: number, attack = 0.015, send = 0) {
+    cutoff: number, attack = 0.015, send = 0, holdRatio = 0, pan = 0) {
     if (!this.context || !this.output) return;
     // A short exponential attack concentrates its rise at the end and can
     // sound like a tick on bright notes. Use a gentler linear attack and
@@ -615,12 +622,15 @@ export class ChordEngine {
     filter.frequency.value = Math.min(cutoff, this.context.sampleRate * 0.45);
     gain.gain.setValueAtTime(0, now);
     gain.gain.linearRampToValueAtTime(Math.max(0.0002, volume), now + attack);
+    if (holdRatio > 0) gain.gain.linearRampToValueAtTime(Math.max(.0002,volume), now + Math.max(attack,duration*holdRatio));
     gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
     gain.gain.linearRampToValueAtTime(0, now + duration + .012);
     osc.connect(filter);
     filter.connect(gain);
     gain.connect(colourGain);
-    colourGain.connect(this.placedMix.get(this.soundingPlacement?.instrument ?? 'keys')!);
+    const panner = pan && typeof this.context.createStereoPanner === 'function' ? this.context.createStereoPanner() : null;
+    if (panner) { panner.pan.value = pan; colourGain.connect(panner); panner.connect(this.placedMix.get(this.soundingPlacement?.instrument ?? 'keys')!); }
+    else colourGain.connect(this.placedMix.get(this.soundingPlacement?.instrument ?? 'keys')!);
     if (this.delay && send > 0) {
       const sendGain = this.context.createGain();
       sendGain.gain.value = send * this.controls[this.soundingPlacement?.instrument ?? 'keys'];
@@ -637,7 +647,7 @@ export class ChordEngine {
       this.timbreBindings.set(placement.id, bindings);
     }
     this.trackSource(osc, gain, now, () => {
-      filter.disconnect(); colourGain.disconnect();
+      filter.disconnect(); colourGain.disconnect(); panner?.disconnect();
       if (placement && binding) {
         const bindings = this.timbreBindings.get(placement.id);
         bindings?.delete(binding);
@@ -668,27 +678,25 @@ export class ChordEngine {
     const style = this.composition.style;
     const tone = Math.max(0, Math.min(1, brightness));
     if (guitar) {
-      // A distinct plucked voice retains its identity across image palettes.
-      const cutoff = (style === 'ambient' ? 600 : 1200) + tone * 3800;
-      this.tone(frequency, volume * 0.76, duration, tone > 0.7 ? 'sawtooth' : 'triangle', cutoff, 0.005, send);
-      this.tone(frequency * 2, volume * 0.16, duration * 0.38, 'sine', cutoff * 1.5, 0.003, 0);
-      this.tone(frequency * 3, volume * 0.08, 0.09, 'sine', cutoff * 2, 0.002, 0);
+      const cutoff = 650 + tone * 2600;
+      this.tone(frequency,volume*.88,duration,'triangle',cutoff,.028,send);
+      this.tone(frequency*2,volume*.12,duration*.65,'sine',cutoff*1.3,.035,0);
     } else if (style === 'glass') {
-      // Inharmonic partial gives a struck bell a distinct metallic attack.
-      this.tone(frequency, volume * 0.72, duration * 1.5, 'sine', 1600 + tone * 7400, 0.004, send * 0.65);
-      this.tone(frequency * 2.756, volume * (0.06 + tone * 0.2), 0.22, 'sine', 9000, 0.003, send * 0.35);
-      this.tone(frequency * 4, volume * (0.02 + tone * 0.08), 0.1, 'sine', 11000, 0.002, 0);
+      // Airy harmonic layers rather than short inharmonic music-box transients.
+      this.tone(frequency,volume*.85,duration*1.4,'sine',700+tone*2300,.07,send*.65);
+      this.tone(frequency*2,volume*.1,duration*.7,'sine',2400,.09,0);
+      this.tone(frequency*3,volume*.05,duration*.5,'sine',3200,.11,0);
     } else if (style === 'ambient') {
       this.tone(frequency * 0.998, volume * 0.55, duration * 2.4, 'triangle', 400 + tone * 3000, 0.05 + (1 - tone) * 0.15, send);
       this.tone(frequency * 1.002, volume * 0.45, duration * 2.1, 'sine', 1600, 0.19, send);
     } else if (style === 'pulse') {
-      this.tone(frequency, volume * 0.75, duration * 0.85, tone > 0.6 ? 'sawtooth' : 'square',
+      this.tone(frequency, volume * 0.75, duration * 0.85, tone > .65 ? 'sawtooth' : 'triangle',
         450 + tone * 3200, 0.004, send * 0.3);
       this.tone(frequency / 2, volume * 0.25, duration * 0.6, 'sine', 600, 0.006, 0);
     } else {
       this.tone(frequency, volume * 0.8, duration, 'triangle',
-        950 + tone * 3800, Math.min(attack, 0.008), send * 0.6);
-      this.tone(frequency * 2, volume * 0.2, 0.08, 'sine', 7000, 0.002, 0);
+        650 + tone * 2200, Math.max(attack,.028), send * .6);
+      this.tone(frequency * 2, volume * .12, duration * .6, 'sine', 2800, .035, 0);
     }
   }
 
@@ -763,7 +771,8 @@ export class ChordEngine {
     const hits = new Set<Instrument>();
     const composition = applyLoopTheory(this.composition, this.theory);
     const bar = Math.floor(this.step / 8);
-    const root = composition.progression[bar % composition.progression.length];
+    const harmony = harmonyPosition(composition, this.step);
+    const root = harmony.root;
     const beat = this.step % 8;
     const noteAt = (degree: number, register: number) =>
       hz(scaleNote(composition, degree) + this.controls.transpose + this.theory.octave * 12 + register);
@@ -781,16 +790,27 @@ export class ChordEngine {
     });
     this.theoryRetriggers.clear();
     const groups = (instrument: Instrument) => this.placements.filter(p => p.instrument === instrument);
-    const keys = groups('keys'), guitars = groups('guitar'), bass = groups('bass'), drums = groups('drums');
+    const keys = groups('keys'), guitars = groups('guitar'), bass = groups('bass'), drums = groups('drums'), pads = groups('pads');
 
-    // Diatonic chords follow the image's mode; inversions keep the pad compact.
-    if (keys.length && beat === 0 && this.controls.keys > 0 && composition.style === 'ambient' && bar % 2 === 0) {
-      hits.add('keys');
-      [root, root + 2, root + 4].forEach((degree, index) => {
-        this.tone(noteAt(degree >= 7 ? degree - 7 : degree, 24),
-          0.012 / (1 + index * 0.2),
-          3.5 + this.controls.keysSustain * 2.5,
-          'sine', 650 + this.controls.keysTone * 900, 0.45, this.controls.keysDelay);
+    // Pads form the harmonic bed. Inversions move smoothly; images shape voicing/filter.
+    let padAttacks = 0;
+    for (const placement of pads) {
+      const previous = this.padChords.get(placement.id);
+      if (!this.controls.pads || this.step % 2 || padAttacks >= 2) continue;
+      if (previous && previous.index === harmony.index && previous.revision === this.padRevision
+        && this.step - previous.step < harmony.steps) continue;
+      const notes = padVoicing(composition,root,placement.tone,previous?.notes);
+      this.padChords.set(placement.id,{index:harmony.index,revision:this.padRevision,step:this.step,notes});
+      this.soundingPlacement = placement;
+      this.placementHit(placement.id);hits.add('pads');padAttacks++;
+      const length = harmony.steps * 30 / this.controls.tempo * (.95 + this.controls.padsSustain * .4);
+      const cutoff = 380 + this.controls.padsTone * 1500 + placement.tone.brightness * 650;
+      const drift = .0007 + this.controls.padsDrift * .0025;
+      notes.forEach(note => {
+        const frequency = hz(note + this.controls.transpose + this.theory.octave * 12);
+        const level = .035 * placement.level / Math.sqrt(Math.max(1,pads.length));
+        this.tone(frequency*(1-drift),level*.55,length,'triangle',cutoff,.35,0,.62,-.35);
+        this.tone(frequency*(1+drift),level*.45,length,'sine',cutoff*1.3,.5,0,.62,.35);
       });
     }
 
@@ -810,7 +830,7 @@ export class ChordEngine {
         ? arpeggioDegree(root, this.step, this.controls.keysArp, this.controls.keysArpRate, Math.floor(motif.anchor.hue / 90) + motif.lane)
         : loopMelodyDegree(root, melody, this.step, motif.previous, this.theory.range);
       motif.previous = degree;
-      const register = motif.tone.brightness > 0.68 ? 36 : 24;
+      const register = 24;
       const pitch = scaleNote(composition, degree) + this.controls.transpose + this.theory.octave * 12 + register;
       hits.add('keys');
       this.placementHit(placement.id);
@@ -863,11 +883,11 @@ export class ChordEngine {
       bassAttacks++;
       hits.add('bass');
       this.placementHit(placement.id);
-      const nextRoot = composition.progression[(bar + 1) % composition.progression.length];
+      const nextRoot = composition.progression[(harmony.index + 1) % composition.progression.length];
       const contour = motif.tone.profile?.contour;
       const localLight = contour?.length ? contour[Math.floor(this.step / 2) % contour.length] : motif.tone.brightness;
       const colorDegree = [0, 2, 4][Math.min(2, Math.floor((motif.tone.hue / 360 * 0.4 + localLight * 0.6) * 3))];
-      const degree = beat === 7 && this.controls.bassMovement > 0.58 ? nextRoot - 1
+      const degree = (this.step + 1) % harmony.steps === 0 && this.controls.bassMovement > 0.58 ? nextRoot - 1
         : root + (beat === 0 && lane === 0 ? 0 : colorDegree);
       const register = this.controls.bassDepth > 0.66 ? 0 : 12;
       this.tone(noteAt(degree, register), 0.12 * placement.level * (beat % 4 === 0 ? 0.85 : 0.65),
@@ -918,6 +938,15 @@ export class ChordEngine {
           this.noise((open ? 0.036 : beat % 2 === 0 ? 0.026 : 0.017) * volume, true, open, this.controls.drumDelay);
         }
       }
+      if (this.step % 16 === 13 && brightness >= .34 && placement.tone.texture > .2
+        && this.controls.complexity > .2 && randomAt(composition.seed,Math.floor(this.step/16)+placement.id*31)> .4) {
+        const originalTime=this.scheduledTime!;
+        const interval=30/this.controls.tempo*(1+((this.step+1)%2?1:-1)*composition.swing);
+        this.scheduledTime=originalTime+interval*.5;
+        this.noise((brightness>.68?.008:.012)*volume,brightness>.68,false,this.controls.drumDelay);
+        this.placementHit(placement.id);
+        this.scheduledTime=originalTime;
+      }
     });
     this.step++;
     this.soundingPlacement = null;
@@ -929,7 +958,7 @@ export class ChordEngine {
     if (this.pendingTheory) { this.theory = this.pendingTheory; this.pendingTheory = null; }
     this.theoryFadeUntil = 0; this.tonalVoices.clear(); this.theoryRetriggers.clear();
     this.cancelShuffle(); this.placedVoices.clear();
-    this.loopPhrases.clear();
+    this.loopPhrases.clear(); this.padChords.clear();
     this.transportFrames = [];
     if (preserveSampleLoops) this.sampleLoops.forEach((loop, index) => {
       if (loop.stopStep !== undefined) this.sampleLoops.delete(index);

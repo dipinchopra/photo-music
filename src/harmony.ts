@@ -1,4 +1,4 @@
-import { scaleNote, type Composition } from './composition';
+import { scaleNote, harmonyPosition, type Composition } from './composition';
 import { PHOTO_PADS } from './pads';
 
 export function sampleHarmony(composition: Composition, step: number, index: number, transpose = 0) {
@@ -9,8 +9,7 @@ export function sampleHarmony(composition: Composition, step: number, index: num
   const degrees = pad.degrees ?? [0];
   return degrees.map((degree, i) => {
     const offsetBeats = phrase ? i * .5 : 0;
-    const bar = Math.floor((step + offsetBeats * 2) / 8);
-    const root = composition.progression[bar % composition.progression.length];
+    const root = harmonyPosition(composition, step + offsetBeats * 2).root;
     const target = (pad.register ?? 48) + scaleNote(composition, root + degree) + transpose;
     return { rate: Math.pow(2, (target - pad.sourceMidi!) / 12), offsetBeats,
       level: phrase ? 1 : degrees.length > 1 ? .85 / Math.sqrt(degrees.length) : 1 };

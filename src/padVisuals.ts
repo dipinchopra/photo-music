@@ -5,7 +5,7 @@ import { drawVisual, type VisualMode } from './visuals';
 
 export type PadHit = { pad: number; started: number; tone?: ImageTone; loop?: boolean };
 export const PAD_EFFECT_SECONDS = 0.85;
-const COLORS = { keys: '#8be9fd', guitar: '#50fa7b', bass: '#bd93f9', drums: '#ffb86c' };
+const COLORS = { keys: '#8be9fd', guitar: '#50fa7b', bass: '#bd93f9', drums: '#ffb86c', pads: '#e5c79c' };
 /** Live gestures use the selected photo style, with no pad grids or labels. */
 export function drawPadHit(ctx: CanvasRenderingContext2D, image: CanvasImageSource,
   bounds: Bounds, hit: PadHit, seconds: number, dpr = 1, mode: VisualMode = 'living') {

@@ -45,6 +45,7 @@ export function visualOutline(placement: Placement, mode: VisualMode, time = 0):
     return [...Array.from({ length: 33 }, (_, i) => edge(i / 32, -1)),
       ...Array.from({ length: 33 }, (_, i) => edge(1 - i / 32, 1))];
   }
+  if (mode === 'shapes' && placement.instrument === 'pads') return Array.from({length:6},(_,i)=>({x:x+Math.cos(i/6*Math.PI*2)*r,y:y+Math.sin(i/6*Math.PI*2)*r}));
   if (mode === 'shapes' && placement.instrument === 'drums') {
     return [{ x, y: y - r }, { x: x + r, y }, { x, y: y + r }, { x: x - r, y }];
   }
@@ -265,7 +266,7 @@ export function drawVisual(ctx: CanvasRenderingContext2D, image: CanvasImageSour
   ctx.restore();
 }
 
-const INSTRUMENT_COLORS = { keys: '#8be9fd', guitar: '#50fa7b', bass: '#bd93f9', drums: '#ffb86c' };
+const INSTRUMENT_COLORS = { keys: '#8be9fd', guitar: '#50fa7b', bass: '#bd93f9', drums: '#ffb86c', pads: '#e5c79c' };
 
 /** A composition spanning the photo, shared by preview, live canvas and video export. */
 export function drawVisualScene(ctx: CanvasRenderingContext2D, image: CanvasImageSource, bounds: Bounds,

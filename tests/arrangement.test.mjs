@@ -13,8 +13,8 @@ const tone = {hue:120,saturation:.5,brightness:.4,texture:.6,profile:{contour:[.
 test('upload starter has a layered editable ensemble using real local photo samples', () => {
   const sampled = [];
   const loop = createPhotoLoop(bounds,cells,42,0,100,(x,y,r)=>{sampled.push({x,y,r});return tone;});
-  assert.ok(loop.length >= 6 && loop.length <= 9);
-  assert.equal(new Set(loop.map(p=>p.instrument)).size,4);
+  assert.ok(loop.length >= 7 && loop.length <= 10);
+  assert.equal(new Set(loop.map(p=>p.instrument)).size,5);
   assert.deepEqual(loop.map(p=>p.id),Array.from({length:loop.length},(_,i)=>100+i));
   assert.equal(sampled.length,loop.length);
   for(const placement of loop){

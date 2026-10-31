@@ -5,7 +5,7 @@ Built with React, TypeScript, Canvas, Pointer Events and Web Audio; no backend r
 
 ## Place loops
 
-1. Upload a photo, choose Keys, Guitar, Bass or Drums, and tap to place a circle.
+1. Upload a photo, choose Pads, Keys, Guitar, Bass or Drums, and tap to place a circle.
 2. Each circle plays automatically. Drag to move it; tap with the same instrument to remove it.
 3. Use Motion to let circles sway or breathe. Undo, Redo and Shuffle remain available.
 4. Open Music for key, scale, octave and melodic range. Auto key/scale use the photo's analysis.
@@ -60,13 +60,14 @@ and Live image keeps both kinds of loop running. A new photo starts a fresh sess
 
 ## Composition
 
-- The whole photo establishes style, tempo, swing, scale and a spatially derived chord progression.
-- Each melodic circle gets a repeatable two-bar motif inside an eight-bar statement/repeat/answer/return structure.
+- The whole photo establishes style, tempo, swing, scale and a spatially derived chord progression. Chords move every two bars by default; placed instruments and live samples share this slower harmonic clock.
+- Pads provide four-note extended/suspended chords with nearby inversions, slow attacks, sustained plateaus and gently detuned stereo layers. Volume, Tone, Sustain and Detune have independent controls.
+- Each melodic circle develops an image-derived motif over eight bars. Alternate phrase endings leave space; there is no mandatory answer-and-tonic ending.
 - Local light contours shape melodic direction; edge activity shapes rhythm and accents. Circle size and Variation control detail.
 - Lead and response roles favor different phrase halves. At most two Keys or Guitar attacks sound per clock step; priority rotates so additional circles remain audible.
-- Strong beats prefer chord tones, weak beats allow passing scale notes, and octave choices favor nearby notes.
+- Strong beats prefer chord tones, weak beats allow passing scale notes, and octave choices favor nearby notes. Leads stay in a warmer register; bell-like inharmonic transients are replaced with softer harmonic layers.
 - Moving circles keep their rhythm identity. Significant region changes gradually develop their notes at two-bar boundaries. Continuous image sampling still changes the timbre of sounding notes.
-- Bass supports the common harmony; percussion uses phrase-sampled regional character. Four-on-the-floor is optional and starts off.
+- Bass supports the common harmony; percussion uses phrase-sampled regional character and occasional quiet sixteenth-note anticipations. Four-on-the-floor is optional and starts off.
 - Shuffle varies photo-derived harmony and ensemble without enabling automatic arpeggios. Explicit arpeggiator controls remain available.
 - Music settings preserve the clock. Key, scale and octave change on the next beat: old pitched voices fade to zero and new voices ease in. Active melodic sample layers revoice without resetting their repeat grid; percussion keeps playing. Melodic range shapes the next phrase. Settings persist through Shuffle and photo changes until changed explicitly.
 

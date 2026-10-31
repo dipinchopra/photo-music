@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 const source = stripTypeScriptTypes(readFileSync(new URL('../src/composition.ts', import.meta.url), 'utf8'));
 const { composeImage, composeCircleLoop, developLoopTone, loopMelodyDegree, applyLoopTheory,
-  DEFAULT_LOOP_THEORY, LOOP_SCALES, scaleNote, arpeggioDegree, arrangePhotoMusic } =
+  DEFAULT_LOOP_THEORY, LOOP_SCALES, harmonyPosition, padVoicing, scaleNote, arpeggioDegree, arrangePhotoMusic } =
   await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 const tone = (hue, brightness, texture = .2, saturation = .6) => ({ hue, brightness, texture, saturation });
 const dark = Array.from({length:16}, (_,i) => tone(210+i, .18, .1));
@@ -31,15 +31,15 @@ test('contrasting photos change palette, harmony and musical score', () => {
   assert.deepEqual(photos.map(p=>p.style), ['ambient','glass','plucked','pulse']);
   assert.equal(new Set(photos.map(p=>p.tempo)).size,4);
 });
-test('eight-bar structure repeats a recognizable motif and develops its ending', () => {
+test('eight-bar structure keeps its opening but leaves alternate phrase endings open', () => {
   const notes = make().notes;
   assert.equal(notes.length,64);
-  assert.deepEqual(notes.slice(0,16).map(n=>n.active),notes.slice(16,32).map(n=>n.active));
+  assert.ok(notes.slice(16,32).every((n,i)=>!n.active || notes[i].active));
   assert.deepEqual(notes.slice(0,16).map(n=>n.active),notes.slice(32,48).map(n=>n.active));
   const onsets=active(make()).filter(i=>i<16);
   assert.equal(notes[onsets[0]].degree,notes[onsets[0]+16].degree);
-  assert.notEqual(notes[onsets.at(-1)].degree,notes[onsets.at(-1)+16].degree);
-  assert.equal(notes[onsets.at(-1)+48].degree,0);
+  assert.equal(notes[onsets.at(-1)+16].active,false);
+  assert.equal(notes[onsets.at(-1)+48].active,false,'no mandatory tonic cadence');
   assert.notDeepEqual(notes.slice(0,16),notes.slice(32,48));
 });
 test('lead and response favor different phrase halves without filling every beat', () => {
@@ -63,7 +63,7 @@ test('scores preserve space, bounded note lengths and deterministic variation ac
     const onsets=active(score);
     assert.ok(onsets.length<=24);
     for(let i=1;i<onsets.length;i++) assert.ok(onsets[i]-onsets[i-1]>=2);
-    for(const n of score.notes.filter(n=>n.active)) assert.ok(n.hold>=1 && n.hold<=6 && n.accent>0 && n.accent<=1);
+    for(const n of score.notes.filter(n=>n.active)) assert.ok(n.hold>=1 && n.hold<=9 && n.accent>0 && n.accent<=1);
   }
 });
 test('local contour direction survives composition and is not folded to four chord tones', () => {
@@ -123,4 +123,27 @@ test('explicit arpeggiators remain available with ascending and descending chord
   assert.deepEqual(notes('up'),[0,2,4,7,0,2]);
   assert.deepEqual(notes('down'),[7,4,2,0,7,4]);
   assert.deepEqual(notes('upDown'),[0,2,4,7,4,2]);
+});
+
+test('pads use extended or suspended diatonic voicings with smooth inversions',()=>{
+  for(const scale of Object.values(LOOP_SCALES)) for(const tonic of [0,5,11]) {
+    const c={...composition,scale,tonic};let previous=[];
+    for(const root of [0,5,3,4]) {
+      const notes=padVoicing(c,root,local,previous);
+      assert.equal(notes.length,4);assert.equal(new Set(notes).size,4);
+      assert.ok(notes.every(n=>n>=12&&n<=43));
+      assert.ok(notes.every(n=>scale.includes(((n-tonic)%12+12)%12)));
+      assert.ok(notes.some(n=>((n-scaleNote(c,root+8))%12+12)%12===0),'voicing includes the diatonic ninth');
+      previous=notes;
+    }
+  }
+  assert.notDeepEqual(padVoicing(composition,0,{...local,saturation:.1}),padVoicing(composition,0,local));
+});
+
+test('generated harmony lasts two bars and synth/live parts share the same chord index',()=>{
+  const c=composeImage(bright);
+  assert.equal(c.harmonicBars,2);
+  for(let step=0;step<16;step++) assert.equal(harmonyPosition(c,step).index,0);
+  assert.equal(harmonyPosition(c,16).index,1);
+  assert.equal(harmonyPosition({...c,harmonicBars:1},8).index,1,'explicit faster changes remain supported');
 });

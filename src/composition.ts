@@ -3,7 +3,7 @@ import type { ImageTone } from './music';
 export type Composition = {
   style: 'ambient' | 'glass' | 'plucked' | 'pulse'; tempo: number; swing: number;
   seed: number; tonic: number; scale: readonly number[];
-  rhythm?: readonly number[];
+  rhythm?: readonly number[]; harmonicBars?: number;
   progression: readonly number[]; energy: number; warmth: number;
 };
 const MODES = [
@@ -40,10 +40,10 @@ export function composeImage(cells: ImageTone[]): Composition {
   const style = saturation > 0.58 && energy > 0.42 ? 'pulse'
     : brightness < 0.34 || (saturation < 0.22 && energy < 0.3) ? 'ambient'
     : brightness > 0.64 ? 'glass' : 'plucked';
-  const tempos = { ambient: 78, glass: 96, plucked: 108, pulse: 124 };
+  const tempos = { ambient: 76, glass: 88, plucked: 98, pulse: 112 };
   return {
-    style, tempo: tempos[style] + Math.round(energy * 16),
-    swing: style === 'plucked' ? 0.2 : style === 'glass' ? 0.09 : 0,
+    style, harmonicBars: 2, tempo: tempos[style] + Math.round(energy * 10),
+    swing: style === 'plucked' ? .12 : style === 'glass' ? .06 : .04,
     seed, tonic: Math.floor(randomAt(seed, 0) * 12), scale: MODES[mode],
     progression: [0, ...[1, 2, 3].map(section => {
       const cell = cells[Math.floor(section * cells.length / 4)];
@@ -90,7 +90,7 @@ export function arrangePhotoMusic(cells: ImageTone[], variation: number) {
     arps: { keys: keysArp, guitar: 'off' as ArpMode,
       keysRate: palette === 3 ? 1 : 2, guitarRate: 2 },
     controls: {
-      pitch: 0, complexity: 24 + Math.round(pick(3) * 18),
+      pitch: 0, complexity: 18 + Math.round(pick(3) * 18),
       keysTone: 30 + Math.round(pick(4) * 25), keysSustain: palette === 0 ? 78 : 38,
       guitarTone: 32 + Math.round(pick(5) * 22), guitarStrum: 35 + Math.round(pick(6) * 30),
       bassMovement: palette % 2 ? 48 : 24, bassDepth: 78,
@@ -145,16 +145,16 @@ export function composeCircleLoop(composition: Composition, tone: ImageTone, lan
   const seed = composition.seed ^ Math.imul(lane + 1, 0x45d9f3b)
     ^ Math.round(rhythmTone.hue / 30) * 101 ^ Math.round(rhythmTone.texture * 6) * 313;
   const density = clampUnit(complexity * (.55 + size * .7));
-  const start = response ? 8 : 0;
+  const start = response ? 9 : 0;
   const score = (slot: number) => profileAt(rhythmTone.profile?.activity, Math.floor(slot / 2), rhythmTone.texture) * .65
     + (composition.rhythm?.[Math.floor(slot / 2) % (composition.rhythm?.length || 1)] ?? .2) * .2
     + randomAt(seed, slot + 70) * .3 + ((slot >= 8) === response ? .4 : 0);
   const second = composition.style === 'ambient' ? start + 4
-    : [start + 3, start + 4, start + 5].sort((a, b) => score(b) - score(a))[0];
+    : [start + 3, start + 5].sort((a, b) => score(b) - score(a))[0];
   const anchors = [start, second];
   const candidates = Array.from({ length: response ? 15 : 13 }, (_, i) => i)
     .filter(slot => !anchors.includes(slot)).sort((a, b) => score(b) - score(a));
-  const count = Math.round(density * (composition.style === 'ambient' ? 2 : 4));
+  const count = Math.round(density * (composition.style === 'ambient' ? 1 : 3));
   const onsets = [...anchors];
   for (const slot of candidates) {
     if (onsets.length >= anchors.length + count) break;
@@ -168,7 +168,7 @@ export function composeCircleLoop(composition: Composition, tone: ImageTone, lan
     const light = profileAt(tone.profile?.contour, Math.floor(slot / 2),
       clampUnit(tone.brightness + (randomAt(seed, i + 20) - .5) * .6));
     const target = center + Math.round((light - .5) * spread * 2);
-    const degree = previous + Math.max(-3, Math.min(3, target - previous));
+    const degree = previous + Math.max(-4, Math.min(4, target - previous));
     previous = degree;
     return degree;
   });
@@ -176,14 +176,16 @@ export function composeCircleLoop(composition: Composition, tone: ImageTone, lan
     const slot = step % 16, section = Math.floor(step / 16), index = onsets.indexOf(slot);
     if (index < 0) return { active: false, degree: 0, hold: 1, accent: 0 };
     let degree = motif[index];
-    // Keep the opening; develop the ending, then return with a cadence.
-    if (section === 2 && index > 0) degree = center - (degree - center) + 1;
-    if (section === 1 && index === onsets.length - 1) degree += 1;
-    if (section === 3 && index === onsets.length - 1) degree = 0;
+    // Most repetitions retain their contour; a sparse ending evolves over eight bars.
+    if (section === 2 && index === onsets.length - 1) degree += tone.texture > .5 ? -2 : 1;
+    if (section === 3 && index === onsets.length - 1) degree += randomAt(seed, 91) > .5 ? 2 : -1;
+    // Leave alternate phrases open rather than always answering and resolving.
+    if (section % 2 === 1 && index === onsets.length - 1 && density < .65)
+      return { active: false, degree, hold: 1, accent: 0 };
     const next = onsets[index + 1] ?? 16;
     return { active: true, degree,
-      hold: Math.max(1, Math.min(composition.style === 'ambient' ? 6 : 4, next - slot - 1)),
-      accent: (response ? .72 : .86) * (index === 0 ? 1 : .78 + profileAt(tone.profile?.activity, index, tone.texture) * .18) };
+      hold: Math.max(1, Math.min(composition.style === 'ambient' ? 9 : 6, next - slot - 1)),
+      accent: (response ? .6 : .74) * (index === 0 ? 1 : .78 + profileAt(tone.profile?.activity, index, tone.texture) * .18) };
   });
   return { notes, tone };
 }
@@ -202,4 +204,27 @@ export function loopMelodyDegree(root: number, event: LoopNote, step: number, pr
     degree = alternatives.reduce((best, value) => Math.abs(value - previous) < Math.abs(best - previous) ? value : best, degree);
   }
   return degree;
+}
+
+/** Shared by synthesized parts and live sample harmony. */
+export function harmonyPosition(composition: Composition, step: number) {
+  const steps = 8 * (composition.harmonicBars ?? 1);
+  const index = Math.floor(step / steps);
+  return { root: composition.progression[index % composition.progression.length], index, steps };
+}
+
+/** Extended/suspended four-note voicings, choosing inversions that move the least. */
+export function padVoicing(composition: Composition, root: number, tone: ImageTone, previous: readonly number[] = []) {
+  const intervals = tone.saturation < .25 ? [0, 3, 6, 8]
+    : tone.brightness > .52 || tone.texture > .35 ? [0, 2, 6, 8] : [0, 2, 4, 8];
+  const raw = intervals.map(degree => scaleNote(composition, root + degree));
+  const candidates: number[][] = [];
+  for (let inversion = 0; inversion < 4; inversion++) for (const register of [0,12,24]) {
+    const notes = raw.map((note,i) => note + (i < inversion ? 12 : 0) + register).sort((a,b) => a-b);
+    if (notes[0] >= 12 && notes[3] <= 43) candidates.push(notes);
+  }
+  const target = previous.length === 4 ? previous : [15,22,28,34];
+  const cost = (notes: readonly number[]) => notes.reduce((sum,note,i) => sum + Math.abs(note-target[i]),0)
+    + Math.max(0,notes[3]-notes[0]-21) * .5;
+  return candidates.sort((a,b) => cost(a)-cost(b))[0] ?? raw.map(note => note+12);
 }

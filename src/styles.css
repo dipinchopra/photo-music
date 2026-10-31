@@ -543,3 +543,5 @@ html, body, #root, .app, .app * {
 .liveTriggerChoice { display: flex; gap: 4px; }
 .livePlaybackControls button[aria-pressed=true] { background: #eee; color: #111; }
 @media(max-width:450px) { .livePlaybackControls { gap: 6px; } .livePlaybackControls label { font-size: 10px; } .livePlaybackControls button, .livePlaybackControls select { font-size: 10px; padding: 7px; } }
+
+.padsModule > small { grid-column: 1 / -1; line-height: 1.5; color: #aaa; }

@@ -12,6 +12,7 @@ import { drawPadHit, drawLiveFeedback, updateLiveFeedback, PAD_EFFECT_SECONDS, t
 
 const music = new ChordEngine();
 const INSTRUMENTS: Array<{ id: Instrument; label: string; color: string }> = [
+  { id: 'pads', label: '◌ Chord pads', color: '#e5c79c' },
   { id: 'keys', label: '🎹 Keyboard', color: '#8be9fd' },
   { id: 'guitar', label: '🎸 Guitar', color: '#50fa7b' },
   { id: 'bass', label: '🎸 Bass', color: '#bd93f9' },
@@ -119,7 +120,7 @@ export default function App() {
   const [audioPaused, setAudioPaused] = useState(false);
   const [imageStyle, setImageStyle] = useState('');
   const [placements, setPlacements] = useState<Placement[]>([]);
-  const [selected, setSelected] = useState<Instrument>('keys');
+  const [selected, setSelected] = useState<Instrument>('pads');
   const [mode, setMode] = useState<'place' | 'live'>('place');
   const modeRef = useRef(mode);
   modeRef.current = mode;
@@ -137,7 +138,8 @@ export default function App() {
   const [loopTheory, setLoopTheory] = useState<LoopTheory>({ ...DEFAULT_LOOP_THEORY });
   const [arps, setArps] = useState({ keys: 'off' as ArpMode, guitar: 'off' as ArpMode, keysRate: 2, guitarRate: 2 });
   const [controls, setControls] = useState({
-    tempo: 96, pitch: 0, complexity: 52, space: 58,
+    tempo: 96, pitch: 0, complexity: 32, space: 58,
+    pads: 64, padsTone: 38, padsSustain: 78, padsDrift: 45,
     placedLevel: 100, sampleLevel: 55, sampleKeys: 78, sampleGuitar: 70, sampleBass: 68, sampleDrums: 60,
     keys: 78, keysTone: 62, keysSustain: 55, keysDelay: 0,
     guitar: 70, guitarTone: 58, guitarStrum: 50, guitarDelay: 0,
@@ -367,6 +369,7 @@ export default function App() {
 
   useEffect(() => {
     music.configure({
+      pads: controls.pads / 100, padsTone: controls.padsTone / 100, padsSustain: controls.padsSustain / 100, padsDrift: controls.padsDrift / 100,
       placedLevel: controls.placedLevel / 100, sampleLevel: controls.sampleLevel / 100,
       sampleKeys: controls.sampleKeys / 100, sampleGuitar: controls.sampleGuitar / 100,
       sampleBass: controls.sampleBass / 100, sampleDrums: controls.sampleDrums / 100,
@@ -725,7 +728,7 @@ export default function App() {
         arrangementVersionRef.current = 0;
         music.setComposition(composition);
         music.configure({ tempo: composition.tempo });
-        setImageStyle({ ambient: 'Soft atmosphere', glass: 'Glass bells', plucked: 'Plucked groove', pulse: 'Synth pulse' }[composition.style]);
+        setImageStyle({ ambient: 'Warm atmosphere', glass: 'Airy texture', plucked: 'Broken groove', pulse: 'Deep pulse' }[composition.style]);
         setControls(current => ({ ...current, tempo: composition.tempo }));
       }
       stopLive(); music.stopSamples(); setLoopPads([]);
@@ -895,8 +898,8 @@ export default function App() {
           if (selected === instrument.id) openSheet(instrument.id);
           else { setSelected(instrument.id); setSheet(null); }
         }}>
-        <span className="instrumentGlyph" aria-hidden="true">{['▥', '≋', '⌁', '⠿'][index]}</span>
-        <span>{['Keys', 'Guitar', 'Bass', 'Drums'][index]}</span><i />
+        <span className="instrumentGlyph" aria-hidden="true">{['◌', '▥', '≋', '⌁', '⠿'][index]}</span>
+        <span>{['Pads', 'Keys', 'Guitar', 'Bass', 'Drums'][index]}</span><i />
       </button>)}
       {mode === 'place' && <button className={`theoryButton ${sheet === 'theory' ? 'active' : ''}`} aria-controls="instrumentSheet" aria-expanded={sheet === 'theory'} onClick={() => openSheet('theory')}>
         <span className="instrumentGlyph" aria-hidden="true">♫</span><span>Music</span>
@@ -957,6 +960,11 @@ export default function App() {
       <label className="sizeControl"><span>Amount <output>{motionAmount}%</output></span>
         <Slider max={300} value={motionAmount} onChange={value => changeMotion(motionRef.current, value / 100)} /></label>
     </div>}
+        {sheet === 'pads' && <div className="instrumentModule padsModule"><strong>Chord pads</strong>
+          <small>Slow, extended chords follow the image. Motion shapes their warmth and voicing; controls shape the next chord.</small>
+          {([['pads','Volume'],['padsTone','Tone'],['padsSustain','Sustain'],['padsDrift','Detune']] as const).map(([key,label])=>
+            <label key={key}><span>{label} <output>{controls[key]}%</output></span><Slider value={controls[key]} onChange={value=>setControl(key,value)} /></label>)}
+        </div>}
         {sheet === 'keys' && <div className="instrumentModule keysModule"><strong>🎹 Keyboard</strong>
           {([['keys', 'Volume', 'Sets the level of every keyboard circle.'], ['keysTone', 'Tone', 'Moves from soft keys to a brighter synth.'],
             ['keysSustain', 'Note length', 'Controls how long keyboard notes ring.']] as const).map(([key, label, help]) =>

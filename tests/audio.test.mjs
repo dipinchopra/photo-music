@@ -22,7 +22,7 @@ class Param {
   cancelScheduledValues() {}
 }
 class Node {
-  gain = new Param(); playbackRate = new Param(); frequency = new Param(); threshold = new Param();
+  pan = new Param(); gain = new Param(); playbackRate = new Param(); frequency = new Param(); threshold = new Param();
   ratio = new Param(); delayTime = new Param();
   connections = [];
   connect(node) { this.connections.push(node); }
@@ -33,8 +33,9 @@ class Node {
 class Context {
   static instances = [];
   state = 'running'; currentTime = 0; sampleRate = 8000; destination = new Node();
-  bufferSources = []; oscillators = []; filters = []; gains = []; resumeCalls = 0;
+  panners = []; bufferSources = []; oscillators = []; filters = []; gains = []; resumeCalls = 0;
   constructor() { Context.instances.push(this); }
+  createStereoPanner() { const node=new Node();this.panners.push(node);return node; }
   createGain() { const node = new Node(); this.gains.push(node); return node; }
   createDelay() { this.delay = new Node(); return this.delay; }
   createDynamicsCompressor() { return new Node(); }
@@ -466,7 +467,7 @@ test('live harmony follows the audible chord rather than the scheduler lookahead
   globalThis.fetch = async () => ({ok:true,arrayBuffer:async()=>new ArrayBuffer(48)});
   try {
     const engine = new ChordEngine();
-    engine.setComposition({...composeImage([cell]),tonic:0,scale:[0,2,4,5,7,9,11],progression:[0,4],swing:.2});
+    engine.setComposition({...composeImage([cell]),tonic:0,scale:[0,2,4,5,7,9,11],progression:[0,4],harmonicBars:1,swing:.2});
     engine.configure({tempo:120}); await engine.prepareSamples('https://example.com/samples/');
     engine.updatePlacements([placement]); engine.step = 7;
     const ctx = Context.instances.at(-1); ctx.currentTime=10; engine.schedule();
@@ -1007,4 +1008,61 @@ test('release fallback holds the current level before fading to silence',async()
     assert.equal(gain.gain.events.at(-1).value,0);
     assert.ok(Math.abs(gain.gain.events.at(-1).time-.3)<1e-9);
   }
+});
+
+test('placeable pads sustain an extended chord across two bars and follow the next harmony',async()=>{
+  const engine=new ChordEngine();
+  engine.setComposition({...composeImage([cell]),tonic:0,progression:[0,5,3,4],swing:0});
+  engine.configure({tempo:120});
+  const pad={...placement,instrument:'pads',level:.6};
+  const hitSteps=[];let step=0;engine.onPlacementHit=()=>hitSteps.push(step);
+  await engine.playPlacements([pad]);
+  const ctx=Context.instances.at(-1),initial=ctx.oscillators.slice();
+  assert.equal(initial.length,8,'four chord tones, each with two detuned layers');
+  assert.ok(ctx.panners.some(node=>node.pan.value<0)&&ctx.panners.some(node=>node.pan.value>0),'pad layers occupy both sides of the stereo field');
+  for(const osc of initial) {
+    const envelope=osc.connections[0].connections[0].gain.events;
+    assert.ok(envelope[1].time-osc.startTime>=.35);
+    assert.ok(envelope.some(e=>(e.kind==='set'||e.kind==='linear')&&e.time>osc.startTime+2&&e.value>0),'held plateau rather than a short pluck');
+    assert.equal(envelope.at(-1).value,0);
+  }
+  for(step=1;step<16;step++)engine.pulse();
+  assert.equal(ctx.oscillators.length,8,'pads are not retriggered every melodic tick');
+  step=16;engine.pulse();
+  assert.equal(ctx.oscillators.length,16);
+  assert.deepEqual(hitSteps,[0,16]);
+  assert.notDeepEqual(ctx.oscillators.slice(8).map(n=>n.frequency.value),initial.map(n=>n.frequency.value));
+});
+
+test('pads respond to theory handoffs and have an independent mixer lane',async()=>{
+  const engine=new ChordEngine();engine.configure({tempo:120});
+  await engine.playPlacements([{...placement,instrument:'pads'}]);
+  const ctx=Context.instances.at(-1),first=ctx.oscillators.length;
+  const notes=[...engine.padChords.get(1).notes];
+  engine.configure({pads:.2,keys:.8});
+  assert.equal(engine.placedMix.get('pads').gain.target.v,.2);
+  assert.equal(engine.placedMix.get('keys').gain.target.v,.8);
+  engine.setLoopTheory({key:0,scale:'minor',octave:1,range:2});
+  advanceAudio(engine,ctx,.6);
+  assert.ok(ctx.oscillators.length>first,'a scale/octave handoff revoices an already held pad');
+  assert.equal(engine.padChords.get(1).revision,engine.padRevision);
+  engine.releasePlacements(.2);
+  assert.equal(engine.padChords.size,0);
+  assert.equal(notes.length,4);
+});
+
+test('quiet percussion anticipations stay inside the swung clock step and keep zero-ended envelopes',async()=>{
+  const {randomAt}=await import(compositionUrl);
+  const seed=Array.from({length:100},(_,i)=>i+1).find(value=>randomAt(value,31)>.4);
+  const engine=new ChordEngine();engine.setComposition({...composeImage([cell]),seed,swing:.12});
+  engine.configure({tempo:120,complexity:.4});
+  await engine.playPlacements([{...placement,instrument:'drums',tone:{...cell,brightness:.9,texture:.7}}]);
+  const ctx=Context.instances.at(-1),before=ctx.bufferSources.length;
+  engine.step=13;engine.pulse(2);
+  const sources=ctx.bufferSources.slice(before),ghost=sources.find(source=>source.startTime>2);
+  assert.ok(ghost&&ghost.startTime<2.22);
+  assert.ok(Math.abs(ghost.startTime-2.11)<1e-9);
+  assert.equal(engine.step,14,'the subdivision does not add or reset a transport step');
+  const envelope=ghost.connections[0].connections[0].gain.events;
+  assert.equal(envelope[0].value,0);assert.equal(envelope.at(-1).value,0);
 });
