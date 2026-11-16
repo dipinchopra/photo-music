@@ -534,16 +534,27 @@ export class ChordEngine {
       this.delay = this.context.createDelay(1);
       this.feedback = this.context.createGain();
       const compressor = this.context.createDynamicsCompressor();
-      this.output.gain.value = 0.78;
+      // Bring quiet voices up before controlling dense mixes and overlapping tails.
+      this.output.gain.value = 3.12;
       compressor.threshold.value = -16;
       compressor.ratio.value = 3;
+      const makeup = this.context.createGain();
+      makeup.gain.value = 1.8;
+      const peakCompressor = this.context.createDynamicsCompressor();
+      peakCompressor.threshold.value = -3;
+      peakCompressor.knee.value = 0;
+      peakCompressor.ratio.value = 20;
+      peakCompressor.attack.value = .003;
+      peakCompressor.release.value = .1;
       this.output.connect(compressor);
+      compressor.connect(makeup);
+      makeup.connect(peakCompressor);
       this.delay.connect(this.feedback);
       this.feedback.connect(this.delay);
       this.delay.connect(this.placedMaster);
-      compressor.connect(this.context.destination);
+      peakCompressor.connect(this.context.destination);
       this.recorderOutput = this.context.createMediaStreamDestination();
-      compressor.connect(this.recorderOutput);
+      peakCompressor.connect(this.recorderOutput);
       this.updateSpace();
     }
     // Safari uses 'interrupted' after screen lock as well as 'suspended'.
@@ -706,10 +717,12 @@ export class ChordEngine {
     const osc = this.context.createOscillator();
     const gain = this.context.createGain();
     osc.type = 'sine';
-    osc.frequency.setValueAtTime(125, now);
-    osc.frequency.exponentialRampToValueAtTime(48, now + 0.15);
+    // A low, rounded body rather than a fast pitch transient that reads as a click.
+    osc.frequency.setValueAtTime(88, now);
+    osc.frequency.exponentialRampToValueAtTime(48, now + 0.12);
     gain.gain.setValueAtTime(0, now);
-    gain.gain.linearRampToValueAtTime(volume, now + .005);
+    gain.gain.linearRampToValueAtTime(volume, now + .014);
+    gain.gain.linearRampToValueAtTime(volume * .9, now + .03);
     gain.gain.exponentialRampToValueAtTime(0.0001, now + .25);
     gain.gain.linearRampToValueAtTime(0, now + .27);
     osc.connect(gain);
@@ -733,17 +746,25 @@ export class ChordEngine {
     for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
     const source = this.context.createBufferSource();
     const filter = this.context.createBiquadFilter();
+    const airFilter = this.context.createBiquadFilter();
     const gain = this.context.createGain();
     const now = this.noteTime;
     source.buffer = buffer;
-    filter.type = bright ? 'highpass' : 'bandpass';
-    filter.frequency.value = Math.min(this.context.sampleRate * .45, bright ? (open ? 5000 : 6800) : 1550);
+    // Band-limit hats as well as snares. High-pass-only white noise left a
+    // broadband needle on every hit, especially harsh on phone speakers.
+    filter.type = 'bandpass';
+    filter.frequency.value = Math.min(this.context.sampleRate * .4, bright ? (open ? 3400 : 3800) : 1550);
+    filter.Q.value = bright ? .8 : 1;
+    airFilter.type = 'lowpass';
+    airFilter.frequency.value = Math.min(this.context.sampleRate * .4, bright ? 6000 : 4200);
+    airFilter.Q.value = .7;
     gain.gain.setValueAtTime(0, now);
-    gain.gain.linearRampToValueAtTime(volume, now + .004);
+    gain.gain.linearRampToValueAtTime(volume * (bright ? .8 : .85), now + .01);
     gain.gain.exponentialRampToValueAtTime(0.0001, now + duration - .006);
     gain.gain.linearRampToValueAtTime(0, now + duration);
     source.connect(filter);
-    filter.connect(gain);
+    filter.connect(airFilter);
+    airFilter.connect(gain);
     gain.connect(this.placedMix.get('drums')!);
     if (this.delay && send > 0) {
       const sendGain = this.context.createGain();
@@ -752,7 +773,7 @@ export class ChordEngine {
       sendGain.connect(this.delay);
     }
     source.start(now);
-    this.trackSource(source, gain, now, () => filter.disconnect(), true, 'drums');
+    this.trackSource(source, gain, now, () => { filter.disconnect(); airFilter.disconnect(); }, true, 'drums');
   }
 
   private snare(volume: number, saturation: number, send: number) {

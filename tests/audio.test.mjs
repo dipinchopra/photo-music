@@ -22,8 +22,10 @@ class Param {
   cancelScheduledValues() {}
 }
 class Node {
+  Q = new Param();
   pan = new Param(); gain = new Param(); playbackRate = new Param(); frequency = new Param(); threshold = new Param();
   ratio = new Param(); delayTime = new Param();
+  knee = new Param(); attack = new Param(); release = new Param();
   connections = [];
   connect(node) { this.connections.push(node); }
   disconnect() {}
@@ -970,16 +972,21 @@ test('kick, snare noise and both hats have zero-ended envelopes with softened at
   const kick=context.oscillators.at(-1),kickEnvelope=kick.connections[0].gain.events;
   assert.equal(kickEnvelope[0].value,0);
   assert.equal(kickEnvelope[1].kind,'linear');
-  assert.ok(kickEnvelope[1].time-kick.startTime>=.005);
+  assert.ok(kickEnvelope[1].time-kick.startTime>=.014);
+  assert.equal(kick.frequency.events[0].value,88);
   assert.equal(kickEnvelope.at(-1).value,0);
   assert.ok(kickEnvelope.at(-1).time<kick.stopTime);
   for(const [bright,open,duration] of [[false,false,.16],[true,false,.055],[true,true,.24]]) {
     engine.noise(.1,bright,open);
     const source=context.bufferSources.at(-1),filter=source.connections[0];
-    const envelope=filter.connections[0].gain.events;
+    const airFilter=filter.connections[0];
+    const envelope=airFilter.connections[0].gain.events;
+    assert.equal(filter.type,'bandpass');
+    assert.equal(airFilter.type,'lowpass');
+    assert.ok(airFilter.frequency.value<=7200);
     assert.equal(envelope[0].value,0);
     assert.equal(envelope[1].kind,'linear');
-    assert.ok(envelope[1].time-source.startTime>=.004);
+    assert.ok(envelope[1].time-source.startTime>=.01);
     assert.equal(envelope.at(-1).value,0);
     assert.ok(Math.abs(envelope.at(-1).time-source.startTime-duration)<1e-9);
     assert.ok(filter.frequency.value<context.sampleRate/2);
@@ -1063,6 +1070,6 @@ test('quiet percussion anticipations stay inside the swung clock step and keep z
   assert.ok(ghost&&ghost.startTime<2.22);
   assert.ok(Math.abs(ghost.startTime-2.11)<1e-9);
   assert.equal(engine.step,14,'the subdivision does not add or reset a transport step');
-  const envelope=ghost.connections[0].connections[0].gain.events;
+  const envelope=ghost.connections[0].connections[0].connections[0].gain.events;
   assert.equal(envelope[0].value,0);assert.equal(envelope.at(-1).value,0);
 });
